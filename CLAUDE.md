@@ -31,7 +31,7 @@ does both.
 - **Language:** Kotlin only.
 - **UI:** Jetpack Compose, Material 3. No XML layouts, no Fragments.
 - **Min SDK:** 26. Target the current stable SDK.
-- **Licence:** Apache License 2.0. Every new source file gets the standard Apache
+- **License:** Apache License 2.0. Every new source file gets the standard Apache
   header (see `LICENSE`/`NOTICE` at repo root for the exact boilerplate). All
   dependencies must be F-Droid-compatible (no proprietary blobs, no Google Play
   Services, no Firebase) — Apache 2.0 is F-Droid-accepted and matches the license of
@@ -119,7 +119,15 @@ When in doubt, ask the human to paste current docs rather than guessing.
 
 ## Style
 
-- Explicit types on public APIs. Inference is fine locally.
+- Explicit types on public APIs. Inference is fine locally. This is about *types*, not
+  visibility keywords — see the next rule.
+- No redundant visibility modifiers. Kotlin is public by default, so writing `public`
+  adds nothing. It would only be required if a module enabled `explicitApi()`, which
+  none currently do.
+- American English throughout — identifiers, comments, and prose. `Flavor`, not
+  `Flavour`.
+- Constants go at the top of a class or object, not next to their first use.
+- Nested type declarations go at the top as well, above the functions.
 - Sealed classes/interfaces for result and error states. No exceptions across module
   boundaries for expected failures (e.g. "this file is not a motion photo").
 - Comment *why*, not *what*. Byte-offset arithmetic deserves a comment; a `for` loop
