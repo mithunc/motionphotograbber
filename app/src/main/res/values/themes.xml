@@ -1,0 +1,6 @@
+<resources>
+    <!-- Activity window chrome only. All real theming (colors, typography) is done
+         in Compose via Material 3 (MaterialTheme). A NoActionBar platform parent
+         keeps us off the removed AppCompat/MaterialComponents dependencies. -->
+    <style name="Theme.MotionPhotoGrabber" parent="@android:style/Theme.Material.Light.NoActionBar" />
+</resources>

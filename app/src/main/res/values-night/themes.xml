@@ -1,0 +1,4 @@
+<resources>
+    <!-- Dark-mode counterpart of the base theme. See values/themes.xml. -->
+    <style name="Theme.MotionPhotoGrabber" parent="@android:style/Theme.Material.NoActionBar" />
+</resources>
