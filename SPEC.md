@@ -32,10 +32,10 @@ Legacy Google `MicroVideoOffset`, Samsung, and the Google/Samsung **HEIC contain
 (single file, embedded video — what Media3's `HeifExtractor` handles as of 1.9.0) are
 out of scope for v1 but need no restructuring to add:
 
-- `Flavour` already enumerates them, so a new format is a new detection branch and an
+- `Flavor` already enumerates them, so a new format is a new detection branch and an
   enum value — not a change to the result type or to anything downstream of it.
 - `MotionPhoto.NotSupported` exists alongside `NotMotionPhoto`, so once a format is
-  recognised the UI can distinguish "a motion photo we can't read yet" from "not a
+  recognized the UI can distinguish "a motion photo we can't read yet" from "not a
   motion photo" without a new state being threaded through.
 - The parser takes bytes and a total size — never a `Context` or `Uri` — so any new
   format can be developed and verified entirely on the JVM against a sample file.
@@ -56,7 +56,7 @@ design cannot absorb it as-is:
   delivers only the still — the `.MOV` never reaches the app at all.
 
 So Apple support means a second input model (a still *plus* a located video), not a new
-`Flavour`. Whether to shape the v1 types for that now or refactor later is an open
+`Flavor`. Whether to shape the v1 types for that now or refactor later is an open
 question below. Structure verified from public documentation only — **no Apple sample
 has been inspected**, so treat the details above as unconfirmed until one is.
 
@@ -132,19 +132,19 @@ sealed interface MotionPhoto {
         val gainMapByteRange: LongRange?,    // null when the file is not Ultra HDR
         val videoByteRange: LongRange,
         val defaultFrameTimestampUs: Long?,  // MotionPhotoPresentationTimestampUs
-        val flavour: Flavour,
+        val flavor: Flavor,
     ) : MotionPhoto
-    /** Definitely a motion photo, but a flavour this build does not parse. */
-    data class NotSupported(val flavour: Flavour, val reason: String) : MotionPhoto
+    /** Definitely a motion photo, but a flavor this build does not parse. */
+    data class NotSupported(val flavor: Flavor, val reason: String) : MotionPhoto
     data class NotMotionPhoto(val reason: String) : MotionPhoto
     data class Malformed(val reason: String) : MotionPhoto
 }
 
-// Flavour: GOOGLE_CONTAINER, GOOGLE_MICROVIDEO, SAMSUNG_MARKER, HEIC_CONTAINER
+// Flavor: GOOGLE_CONTAINER, GOOGLE_MICROVIDEO, SAMSUNG_MARKER, HEIC_CONTAINER
 ```
 
 Detection strategies, tried in order:
-- XMP `Container:Directory` / `Item` entries. **The only flavour v1 parses.** Video is
+- XMP `Container:Directory` / `Item` entries. **The only flavor v1 parses.** Video is
   the last item, so `videoStart = filesize − videoLength`.
 - XMP `GCamera:MicroVideoOffset` (legacy) → detected, returns `NotSupported`.
 - ASCII marker `MotionPhoto_Data` (Samsung) → detected, returns `NotSupported`.
@@ -231,8 +231,8 @@ output. Settings for output quality.
 Recorded so they are not re-litigated. Date them when they change.
 
 - **2026-07-20 — Launch format:** Pixel/Google `Container:Directory` only. Other
-  flavours return `NotSupported`.
-- **2026-07-20 — Original-bytes optimisation is in v1**, and that copy **includes the
+  flavors return `NotSupported`.
+- **2026-07-20 — Original-bytes optimization is in v1**, and that copy **includes the
   GainMap**, so the saved default frame stays Ultra HDR. Mid-clip frames are SDR
   because the source video is SDR; the asymmetry is accepted.
 - **2026-07-20 — Mid-clip frames save at native video resolution**, with no special UI

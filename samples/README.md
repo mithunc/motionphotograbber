@@ -42,14 +42,40 @@ privacy caution applies, so raise an issue rather than committing them.
 
 ## Tests
 
-Unit tests that need a real motion photo **skip** when this directory is empty rather
-than fail, so a fresh clone builds green:
-
 ```
 ./gradlew test
 ```
 
+Parser coverage comes in three tiers, because this directory is empty in a fresh clone
+and tests that quietly skip are worse than no tests at all.
+
+| Tier | Needs samples? | What it gives you |
+| --- | --- | --- |
+| Synthetic fixture | No | A motion photo built in test code, asserted to exact byte offsets. Runs everywhere, including a fresh clone. |
+| Sample invariants | Any sample | Runs the parser over **whatever** `*.jpg` you drop in here. No filenames or offsets are hardcoded, so your own photos work as-is. |
+| Exact fixtures | Specific samples | Regression pinning against the maintainer's own files. Skips for everyone else — by design. |
+
+So **you do not need to rename anything.** Drop in your own Pixel motion photos under
+whatever names they already have and the invariant tier will exercise them: it checks
+that the items tile the file exactly, that the still and gain map each begin with a JPEG
+`SOI` marker, and that the computed video offset lands on a real ISO-BMFF `ftyp` box.
+
+The exact-offset fixtures in `MotionPhotoParserTest` name specific files and assert
+specific byte offsets. Those describe one particular set of photos — renaming your file
+to match would make them *fail*, not pass. Leave them skipping; that is expected.
+
 A skipped test is not a passing test. If you are changing parsing logic in
-`:core-motionphoto`, supply at least one sample locally and confirm those tests actually
-run — including the negative case, where an ordinary JPEG with no embedded video must be
-reported as "not a motion photo".
+`:core-motionphoto`, check the counts rather than trusting `BUILD SUCCESSFUL`:
+
+```
+grep -o 'tests="[0-9]*" skipped="[0-9]*"' \
+  core-motionphoto/build/test-results/test/TEST-*.xml
+```
+
+The synthetic tier must always report `skipped="0"`. If it does not, it has failed at
+the one job it exists to do.
+
+Note that the synthetic fixture validates the parser against *our model* of the format,
+not against reality — only real samples catch a real file doing something we did not
+anticipate. That is why supplying one still matters even though the build is green
+without it.

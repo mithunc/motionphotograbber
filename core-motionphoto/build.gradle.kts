@@ -33,4 +33,14 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+
+    // The parser tests read real motion photos from samples/, which Gradle cannot infer
+    // as an input because nothing on the compile classpath references it. Without this,
+    // adding or removing a sample leaves the task UP-TO-DATE and silently reuses the
+    // previous run's results — which reads as "tests skipped" long after the samples are
+    // back in place. Declared optional: samples/ is git-ignored and may be absent.
+    inputs.dir(rootProject.layout.projectDirectory.dir("samples"))
+        .withPropertyName("motionPhotoSamples")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+        .optional()
 }
