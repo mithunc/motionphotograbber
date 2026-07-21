@@ -16,6 +16,7 @@
 package xyz.mithunc.motionphotograbber.motionphoto
 
 import java.io.File
+import java.io.RandomAccessFile
 
 /**
  * Locates the still, gain map, and embedded video inside a motion photo.
@@ -49,29 +50,53 @@ object MotionPhotoParser {
 
     private val SAMSUNG_MARKER: ByteArray = "MotionPhoto_Data".toByteArray(Charsets.US_ASCII)
 
+    private const val ISO_BMFF_FILE_TYPE = "ftyp"
+
     private data class Item(val semantic: String?, val mime: String?, val length: Long?)
+
+    /**
+     * Random access to the source, so declared offsets can be checked against the bytes
+     * actually there. A [File] is read lazily rather than pulled onto the heap — the
+     * video item sits megabytes past the header window.
+     */
+    private fun interface ByteWindow {
+        /** Returns [count] bytes at [offset], or null if that range is not in the file. */
+        fun read(offset: Long, count: Int): ByteArray?
+    }
 
     fun parse(file: File): MotionPhoto {
         val totalSize = file.length()
         if (totalSize < MIN_JPEG_BYTES) {
             return MotionPhoto.NotMotionPhoto("file is too small to be a JPEG")
         }
-        val header = ByteArray(minOf(totalSize, MAX_HEADER_BYTES.toLong()).toInt())
-        file.inputStream().use { stream ->
-            var read = 0
-            while (read < header.size) {
-                val n = stream.read(header, read, header.size - read)
-                if (n < 0) break
-                read += n
-            }
+        val result = RandomAccessFile(file, "r").use { source ->
+            val header = ByteArray(minOf(totalSize, MAX_HEADER_BYTES.toLong()).toInt())
+            source.readFully(header)
+            parse(header, totalSize) { offset, count -> source.readAtOrNull(offset, count) }
         }
-        return withSamsungFallback(parse(header, totalSize)) { containsSamsungMarker(file) }
+        return withSamsungFallback(result) { containsSamsungMarker(file) }
     }
 
-    fun parse(bytes: ByteArray): MotionPhoto =
-        withSamsungFallback(parse(bytes, bytes.size.toLong())) {
+    fun parse(bytes: ByteArray): MotionPhoto {
+        val result = parse(bytes, bytes.size.toLong()) { offset, count ->
+            bytes.readAtOrNull(offset, count)
+        }
+        return withSamsungFallback(result) {
             indexOf(bytes, SAMSUNG_MARKER, 0, bytes.size) >= 0
         }
+    }
+
+    private fun RandomAccessFile.readAtOrNull(offset: Long, count: Int): ByteArray? {
+        if (offset < 0 || offset + count > length()) return null
+        seek(offset)
+        return ByteArray(count).also { readFully(it) }
+    }
+
+    private fun ByteArray.readAtOrNull(offset: Long, count: Int): ByteArray? {
+        if (offset < 0 || offset + count > size) return null
+        val start = offset.toInt()
+        return copyOfRange(start, start + count)
+    }
 
     /**
      * The Samsung marker sits after a complete JPEG — megabytes past the header window
@@ -91,7 +116,7 @@ object MotionPhotoParser {
             result
         }
 
-    private fun parse(header: ByteArray, totalSize: Long): MotionPhoto {
+    private fun parse(header: ByteArray, totalSize: Long, source: ByteWindow): MotionPhoto {
         if (!hasJpegStartOfImage(header)) {
             return MotionPhoto.NotMotionPhoto("not a JPEG (no SOI marker)")
         }
@@ -108,11 +133,53 @@ object MotionPhotoParser {
             }
             return MotionPhoto.NotMotionPhoto("XMP has no Container:Item entries")
         }
-        return layOutItems(items, xmp, totalSize)
+        return layOutItems(items, xmp, totalSize, source)
     }
 
     private fun hasJpegStartOfImage(bytes: ByteArray): Boolean =
         bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()
+
+    /**
+     * Confirms an item's computed offset actually holds the kind of data it claims,
+     * returning a [MotionPhoto.Malformed] describing the mismatch or null if it checks
+     * out.
+     *
+     * Only mime types we have verified against real files are checked; anything else is
+     * accepted rather than guessed at, so an unfamiliar item type cannot cause a valid
+     * file to be rejected.
+     */
+    private fun checkItemLandsOnExpectedData(
+        item: Item,
+        range: LongRange,
+        source: ByteWindow,
+    ): MotionPhoto.Malformed? {
+        val expected = when (item.mime) {
+            // ISO/IEC 14496-12 puts the FileTypeBox first, so bytes 4..8 of an MP4 are
+            // the ASCII "ftyp". Verified present in every real sample.
+            "video/mp4" -> ISO_BMFF_FILE_TYPE to 8
+            "image/jpeg" -> null to 2
+            else -> return null
+        }
+        val (boxType, count) = expected
+        val head = source.read(range.first, count)
+            ?: return MotionPhoto.Malformed(
+                "${item.semantic ?: item.mime} item starts at ${range.first}, past the end of the file"
+            )
+        val ok = if (boxType == null) {
+            hasJpegStartOfImage(head)
+        } else {
+            String(head, 4, 4, Charsets.US_ASCII) == boxType
+        }
+        return if (ok) {
+            null
+        } else {
+            MotionPhoto.Malformed(
+                "${item.semantic ?: item.mime} item at ${range.first} does not begin with " +
+                    "${boxType ?: "a JPEG SOI marker"} — the file is truncated or its " +
+                    "declared lengths are wrong"
+            )
+        }
+    }
 
     /**
      * Returns the payload of the standard XMP APP1 segment, or null if absent.
@@ -212,7 +279,12 @@ object MotionPhotoParser {
             )
         }.toList()
 
-    private fun layOutItems(items: List<Item>, xmp: String, totalSize: Long): MotionPhoto {
+    private fun layOutItems(
+        items: List<Item>,
+        xmp: String,
+        totalSize: Long,
+        source: ByteWindow,
+    ): MotionPhoto {
         // The Primary item declares no length: it is whatever the other items leave
         // over. More than one undeclared length would make the layout ambiguous.
         val undeclared = items.count { it.length == null }
@@ -237,10 +309,6 @@ object MotionPhotoParser {
             ranges += offset until offset + length
             offset += length
         }
-        if (offset != totalSize) {
-            return MotionPhoto.Malformed("container items span $offset bytes, file is $totalSize")
-        }
-
         val videoIndex = items.indexOfFirst { it.semantic == "MotionPhoto" || it.mime == "video/mp4" }
         if (videoIndex < 0) {
             return MotionPhoto.NotMotionPhoto("container declares no MotionPhoto item")
@@ -250,6 +318,18 @@ object MotionPhotoParser {
             return MotionPhoto.Malformed("container declares no Primary item")
         }
         val gainMapIndex = items.indexOfFirst { it.semantic == "GainMap" }
+
+        // Every declared length has to be taken on trust up to this point: the Primary
+        // declares none, so it absorbs whatever the others leave over and the arithmetic
+        // always balances. A truncated file, or one whose XMP misstates a length, still
+        // produces a set of ranges that look entirely reasonable — they just point at
+        // the wrong bytes. The only way to catch that is to look.
+        checkItemLandsOnExpectedData(items[videoIndex], ranges[videoIndex], source)
+            ?.let { return it }
+        if (gainMapIndex >= 0) {
+            checkItemLandsOnExpectedData(items[gainMapIndex], ranges[gainMapIndex], source)
+                ?.let { return it }
+        }
 
         return MotionPhoto.Found(
             stillByteRange = ranges[stillIndex],

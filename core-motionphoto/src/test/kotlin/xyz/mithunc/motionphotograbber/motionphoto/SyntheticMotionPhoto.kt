@@ -67,6 +67,21 @@ internal object SyntheticMotionPhoto {
         )
     }
 
+    /**
+     * A file whose XMP declares a video length that does not match the bytes present.
+     *
+     * Models the two ways a container can lie about its own layout: a length larger
+     * than the whole file, and a length that merely disagrees with reality. The second
+     * is the dangerous one — the arithmetic still closes, so nothing is obviously wrong
+     * unless the parser checks that the items land on real data.
+     */
+    fun buildWithDeclaredVideoLength(declaredVideoLength: Int): ByteArray {
+        val video = mp4()
+        val gainMap = minimalJpeg()
+        val still = primaryJpeg(gainMapLength = gainMap.size, videoLength = declaredVideoLength)
+        return still + gainMap + video
+    }
+
     /** SOI, an APP1 segment carrying the container directory, then EOI. */
     private fun primaryJpeg(gainMapLength: Int, videoLength: Int): ByteArray {
         val payload = (XMP_STANDARD_PREFIX + xmp(gainMapLength, videoLength))

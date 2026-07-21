@@ -99,7 +99,10 @@ sample contradicts should be corrected here rather than worked around in code.
 - **Attribute order varies between files.** Parsing must be order-independent.
 - **Never byte-scan for `ftyp` to locate the video.** The ASCII sequence occurs inside
   entropy-coded JPEG data; one sample has a false positive ~2 MB before the real box.
-  Trust the declared lengths.
+  Trust the declared lengths — then *verify* them. Scanning for `ftyp` is unsound, but
+  checking for it at the offset the lengths produced is sound and is what catches a
+  truncated or mis-declared file. See "Declared lengths must be checked against the
+  bytes" under M1.
 
 **The embedded video**
 
@@ -157,10 +160,44 @@ Detection strategies, tried in order:
 Detecting-but-not-parsing is deliberate: `NotSupported` lets the UI say "this is a
 motion photo we can't read yet" instead of the misleading "not a motion photo".
 
+#### Declared lengths must be checked against the bytes
+
+**`Found` guarantees its ranges point at data of the declared type.** Computing offsets
+from the XMP alone is not enough to earn that.
+
+Because the Primary item declares no `Item:Length`, it absorbs whatever the other items
+leave over — so `implied = filesize − Σ(declared)` *always* balances, no matter how
+wrong the file is. A truncated file, or one whose XMP misstates a length, still yields a
+complete, plausible, entirely incorrect set of ranges. There is no arithmetic check that
+can catch this: a "do the lengths span the file?" test is provably dead code whenever
+exactly one item omits its length.
+
+So the parser verifies each item begins with the data its mime type implies:
+
+| Declared mime | Checked | Why |
+| --- | --- | --- |
+| `video/mp4` | ASCII `ftyp` at bytes 4–8 of the range | ISO/IEC 14496-12 places the FileTypeBox first; present in every sample |
+| `image/jpeg` | `FFD8` at the start of the range | Each image item is a complete JPEG |
+| anything else | nothing | Never guess at an item type we have not verified — an unfamiliar item must not cause a valid file to be rejected |
+
+A mismatch is `Malformed`. This is a deliberate strictness trade: a real motion photo
+that led with some box other than `ftyp` would now be rejected. That is preferable to
+returning ranges that look reasonable and are not, because everything downstream —
+frame extraction, and the v1 byte-copy save path — would act on them and write the
+wrong bytes into the user's gallery.
+
+The check reads 8 bytes at an offset rather than loading the file, so it costs nothing
+on an 8 MB photo.
+
 **Done when:** unit tests pass against every file in `samples/`, asserting exact byte
-ranges, plus a negative case (ordinary JPEG → `NotMotionPhoto`) and a truncated file
-(→ `Malformed`). Expected offsets are per-file and live in the test source, not here —
-`samples/` is gitignored, so tests skip cleanly when it is empty.
+ranges, plus:
+- a negative case (ordinary JPEG → `NotMotionPhoto`)
+- a truncated file and an XMP that misstates a length (both → `Malformed`)
+- truncation at *every* byte offset, asserting the parser returns rather than throws
+
+Expected offsets are per-file and live in the test source, not here — `samples/` is
+gitignored, so those tests skip cleanly when it is empty. Coverage that does not depend
+on samples is described in `samples/README.md`.
 
 ### M2 — Frame extraction (`:core-extract`)
 

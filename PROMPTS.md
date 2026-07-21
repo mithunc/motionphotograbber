@@ -77,7 +77,7 @@ Implement M1 from SPEC.md in :core-motionphoto.
 Constraints:
 - Pure Kotlin. No Android imports. Input is an InputStream or File.
 - Return the sealed MotionPhoto type from SPEC.md.
-- Handle the flavours you actually found evidence for in samples/. Do not
+- Handle the flavors you actually found evidence for in samples/. Do not
   speculatively implement a format we have no sample of — leave a TODO and tell me
   which sample I still need to supply.
 - Comment every piece of byte-offset arithmetic with what the offset is relative to.
