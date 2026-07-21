@@ -113,6 +113,10 @@ sample contradicts should be corrected here rather than worked around in code.
 - A file may contain **more than one `vide` track**. Select the track with more than one
   sample / non-zero duration. Selecting by highest resolution picks the wrong track —
   one observed file carries a single-sample 2048×1536 track beside the real clip.
+- The video **is rotated, and the angle varies per file.** Measured from the `tkhd`
+  matrices on 2026-07-20: two samples declare 90°, one declares 270°. This is what makes
+  a landscape clip sit inside a portrait photo. Hardcoding 90° would silently produce
+  upside-down frames on 270° files.
 - The still is Ultra HDR: Primary JPEG plus GainMap, with `XMP-hdrgm` metadata.
 
 **Tooling caveat**
@@ -209,9 +213,15 @@ timestamp, and report the clip duration.
   `androidx.media3:media3-inspector-frame`, import
   `androidx.media3.inspector.frame.FrameExtractor`, built via
   `FrameExtractor.Builder(context, mediaItem)`; `getFrame(ms)` returns
-  `ListenableFuture<FrameExtractor.Frame>`. Re-verify before use — this class has moved
-  modules three times.
+  `ListenableFuture<FrameExtractor.Frame>`. Now compiled against, not just read from docs.
+  Note `media3-inspector` still exists at 1.10.1 but no longer holds `FrameExtractor`, so
+  depending on the wrong one resolves in Gradle and fails only at the import.
 - Select the video track by sample count, not resolution (see format facts above).
+  **Observed 2026-07-20:** Media3 already picks the real clip track on the one sample that
+  carries a single-sample decoy, so no explicit selection is wired up. This is observed
+  behavior, not something the code enforces — `FrameExtractorOrientationTest` guards it by
+  asserting the returned frame lands near the requested position, which a single-sample
+  track could not do.
 - Frames are saved at native video resolution. No upscaling, and no UI messaging about
   the size difference from the still.
 - Provide two paths: a fast/approximate one for scrub previews (nearest sync frame is
@@ -274,6 +284,21 @@ Recorded so they are not re-litigated. Date them when they change.
   because the source video is SDR; the asymmetry is accepted.
 - **2026-07-20 — Mid-clip frames save at native video resolution**, with no special UI
   messaging about the difference.
+- **2026-07-20 — Media3 applies the video rotation; this project must not.** Measured on a
+  Pixel 10 Pro XL (Android 16): a declared 1440×1080 track decodes to a 1080×1440 bitmap on
+  all three samples, and the decoded frames were confirmed **visually upright** for both the
+  90° and 270° files — so the direction is right, not just the shape. Rotating again would
+  yield 180°-wrong frames. `FrameExtractorOrientationTest` pins this so a Media3 upgrade
+  cannot change it silently.
+- **2026-07-20 — `FrameExtractorOrientationTest` must not be run via `connectedAndroidTest`.**
+  That task uninstalls the test APK afterward, which deletes `/sdcard/Android/data/<pkg>/`
+  along with the pushed samples and the test's output PNGs. The next run then finds no
+  samples and *skips*, which reads as a pass. Install once and drive it with `am instrument`
+  instead; the procedure is in the test's KDoc.
+- **2026-07-20 — Decode in place is achieved through `setMediaSourceFactory`.**
+  `FrameExtractor.Builder` takes no `DataSource.Factory` or fd+offset+length directly, but
+  a `MediaSource.Factory` is built from one, so `SubrangeDataSource` applies the byte range
+  a level down. No temp MP4 is written.
 
 ## Open questions to resolve with the human, not by guessing
 
@@ -283,9 +308,7 @@ Recorded so they are not re-litigated. Date them when they change.
   decides whether M4 can stay a single-file share target.
 - What counts as "nearest the default frame" for the byte-copy path — an exact
   timestamp match, or a tolerance window?
-- What rotation does the embedded video carry? Landscape video inside a portrait photo
-  implies a `tkhd` rotation matrix, but **no value has been verified**. Frames may
-  render sideways until this is confirmed.
-- Does `FrameExtractor.Builder` accept a custom `DataSource.Factory`, or a file
-  descriptor with offset and length? Unverified — reference docs would not render.
-  Blocks the "decode in place, no temp files" requirement in M2.
+- Should the preview path use approximate seeking and the save path exact? Measured drift
+  with default `SeekParameters` was 8–36 ms against a 500 ms request — under one frame
+  interval on every sample — so the default may already be good enough for saves. Not yet
+  decided.
