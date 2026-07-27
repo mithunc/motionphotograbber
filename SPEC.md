@@ -233,26 +233,102 @@ non-null, correct dimensions.
 ### M3 — EXIF transfer (`:core-exif`)
 
 ```kotlin
-fun copyMetadata(from: File, to: File, overrides: Map<String, String> = emptyMap())
+fun copyMetadata(
+    from: JpegFile,
+    to: JpegFile,
+    software: String,
+    frameOffset: Duration,
+    overrides: Map<String, String> = emptyMap(),
+): CopyResult
 ```
 
-- Copy at minimum: GPS (lat/lon/altitude/timestamp), `DateTimeOriginal`,
-  `DateTimeDigitized`, `Make`, `Model`, `LensModel`, `Orientation`, exposure fields.
-- `androidx.exifinterface` has no bulk copy. Enumerate the tags you support in an
-  explicit list constant — this is the honest, debuggable approach.
+`JpegFile` is a value class whose factory checks the file exists, is readable, and starts
+with `FFD8`. `ExifInterface` cannot create a destination, so that precondition is worth a
+type rather than a doc comment. The guarantee is checked at construction, not maintained
+over time, which is why `CopyResult.DestinationUnwritable` still exists.
+
+**The governing rule is that every tag on the output must be true of the output.** Tags
+fall into four dispositions — copied verbatim, derived, computed from the output, or set
+to a constant. Details and the full omission list live in `ExifTags.kt`; the summary:
+
+- Copy: the whole GPS IFD, the `OffsetTime*` zone tags, camera and lens identity
+  (including `BodySerialNumber` — this app preserves metadata, it does not scrub it),
+  shared optics, attribution, print resolution.
+- Derive: the three capture timestamps and their `SubSecTime*` counterparts.
+- Compute: `PixelXDimension`/`PixelYDimension`, read off the output's own SOF markers.
+- Constant: `Orientation` and `Software`.
+- **Do not copy `Orientation`.** Media3 has already applied the clip's rotation (see the
+  2026-07-20 decision), so the frame is upright; copying a portrait still's `6` makes
+  every viewer rotate it another 90°. Written as `1` explicitly.
+- **Do not copy `Xmp`.** The source's XMP *is* the `Container:Directory` — carrying it
+  over makes the frame advertise an embedded video at offsets that do not exist in it,
+  and `:core-motionphoto` would then parse a plain still as a motion photo.
+- **Split the exposure fields.** Optics the still and clip genuinely share (f-number,
+  focal length, aperture) are true of the frame and are copied. Per-exposure values
+  (shutter speed, ISO, metering, white balance) are not: the clip ran its own
+  auto-exposure and Media3 exposes no per-frame values to substitute.
+- `androidx.exifinterface` has no bulk copy — it offers no way to enumerate the tags a
+  file holds, so the only copyable tags are the ones named in an explicit list constant.
+  That is a necessity, not a preference, and it happens to be the debuggable approach
+  too. The list came from triaging all 161 `TAG_*` constants (identical in 1.3.6 and
+  1.4.2), not from recall.
+
+#### Two library constraints the tag list has to respect
+
+Both were found by reading the output bytes, and both are enforced by
+`ExifStructureTest` so they cannot regress.
+
+1. **A tag whose Exif format is `UNDEFINED` cannot be copied at all.** `ExifInterface`
+   exposes only `String` accessors, so `setAttribute` writes such a tag as ASCII and the
+   value is silently wrong — `getAttribute` still returns it intact, which is why a
+   round-trip test cannot see the damage. Confirmed with exiftool: a copied `SceneType`
+   reads back as `Unknown` where the source said `Directly photographed`. This rules out
+   `SceneType`, `FileSource`, `UserComment`, `GPSProcessingMethod` and
+   `GPSAreaInformation`, all of which describe the capture and would otherwise qualify.
+   Losing `UserComment` is a genuine cost; writing a corrupted one is worse.
+2. **Some `TAG_*` constants have no entry in `ExifInterface`'s own tag table**, so
+   setting them does nothing. `LensSerialNumber` is one. It looks like preserved
+   metadata until someone reads the file.
+
+#### What ExifInterface adds on its own
+
+Any file it saves also gains `ImageWidth`, `ImageLength`, `Orientation` and
+`LightSource`, written as `LONG`. Verified with a control: a blank JPEG given nothing but
+`Software` comes back carrying all four. exiftool flags `ImageWidth`/`ImageLength` in
+IFD0 as `[minor] not allowed in JPEG`, and `LightSource` as a non-standard format. These
+are the library's business, not ours — the values are accurate, real readers use the SOF
+markers regardless, and overriding them would mean patching the library's output after
+every save. Left alone deliberately.
 - Verified 2026-07-20: current stable is **1.4.2**. Its XMP quirk is JPEG-specific and
   deliberate — HEIC and PNG were fixed to prefer the separate XMP segment, but JPEG
   still prefers Exif tag 700 for backward compatibility. **Do not use ExifInterface to
   read the Container directory**; that is `:core-motionphoto`'s job. ExifInterface is
   for writing metadata onto the output only.
-- Decide and document: should `DateTimeOriginal` be the original shutter time, or
-  shutter time offset by the frame's position in the clip? **Default to the original
-  shutter time**, so the extracted still sorts next to its siblings in a gallery.
-  Make it a setting later, not now.
-- Write `Software` to identify this app as the producer. Do not strip anything else.
+- **`DateTimeOriginal` is offset by the frame's position in the clip** (2026-07-26,
+  reversing the 2026-07-20 decision — see "Decisions made"). Not a user setting.
+  Two things this requires:
+  - The offset is **signed**. The shutter press sits *inside* the clip, at
+    `MotionPhotoPresentationTimestampUs` — 1.40 s, 0.85 s and 0.20 s on the three
+    samples — so frames before it are ordinary, not an edge case, and the offset is
+    `framePosition − defaultFrameTimestampUs`.
+  - `SubSecTime*` must move with its datetime tag. `DateTimeOriginal` holds whole
+    seconds, so shifting it alone truncates the result and two frames from one clip
+    sort arbitrarily. Written at microsecond width, because the clip's frame positions
+    arrive in microseconds and rounding to milliseconds discards a value we hold.
+- Write `Software` to identify this app as the producer. Supplied by the caller, not
+  hardcoded here: both the app's name and its version are subject to change. `:app`
+  composes it from `R.string.app_name` and `BuildConfig.VERSION_NAME`.
+- Do not strip anything else.
 
 **Done when:** a JVM test writes a frame, copies metadata, reads it back, and asserts
-GPS and timestamp survive a round trip.
+GPS and timestamp survive a round trip. ✅ 2026-07-26 — 19 tests, two tiers (synthetic
+fixtures that run in a fresh clone, plus every file in `samples/`).
+
+`ExifInterface` needs one accommodation to run under JVM unit tests:
+`unitTests.isReturnDefaultValues` **plus** a real `android.util.Pair` in the test source
+set. `setAttribute` unboxes a `Pair` returned by `guessDataFormat`, and the mockable
+`android.jar` strips constructor bodies, so the fields arrive null. Nothing else in the
+File-based JPEG path needs the same treatment.
 
 ### M4 — UI (`:app`)
 
@@ -260,8 +336,23 @@ GPS and timestamp survive a round trip.
 - Debounce scrub events; cancel in-flight decodes when the position changes.
 - Filmstrip of periodic thumbnails is a **stretch goal**, not part of M4.
 - Save button → `MediaStore` write to `Pictures/`. Two paths: if the scrub position is
-  nearest the default frame, byte-copy Primary + GainMap from the source untouched
-  (preserving Ultra HDR and the original EXIF); otherwise decode, encode, and copy EXIF.
+  nearest the default frame, copy Primary + GainMap from the source (preserving Ultra HDR
+  and the original EXIF); otherwise decode, encode, and copy EXIF.
+- **That first path is not a pure byte copy** (noticed 2026-07-26 while building M3). The
+  Primary's EXIF is complete and correct, so nothing there needs repair — but its XMP
+  holds the `Container:Directory` declaring three items, the third a `video/mp4`. Write
+  out Primary + GainMap alone and the output still advertises a video it does not
+  contain, with lengths that no longer add up; `:core-motionphoto` would return
+  `Malformed` on our own output. The path must rewrite the XMP to drop the MotionPhoto
+  item and correct the remaining lengths, while preserving the `hdrgm` gain-map metadata
+  that keeps the file Ultra HDR. **Inferred from the format facts above, not verified
+  against a real gallery** — get a real file through the path and check before relying
+  on any of it.
+- Set `MediaStore.DATE_TAKEN` explicitly, in milliseconds, rather than leaving the
+  scanner to re-derive it from EXIF. `DATE_TAKEN` is what a gallery sorts on, and it is
+  what makes two frames extracted from one clip appear in capture order.
+- Compose the `Software` string M3 requires from `R.string.app_name` and
+  `BuildConfig.VERSION_NAME`.
 - Register as a share target for `image/jpeg` so the user can share from any gallery,
   including ReFra.
 
@@ -299,6 +390,34 @@ Recorded so they are not re-litigated. Date them when they change.
   `FrameExtractor.Builder` takes no `DataSource.Factory` or fd+offset+length directly, but
   a `MediaSource.Factory` is built from one, so `SubrangeDataSource` applies the byte range
   a level down. No temp MP4 is written.
+- **2026-07-26 — `DateTimeOriginal` is offset by the frame's position, reversing the
+  2026-07-20 decision** that defaulted to the original shutter time "so the extracted
+  still sorts next to its siblings". That rationale did not hold: an offset timestamp
+  still sorts adjacently, because clips run 1–3 s, *and* it disambiguates two frames
+  pulled from the same clip, which identical timestamps cannot. It is also simply the
+  more accurate value. **Not a user setting** — there is no plausible use case, and the
+  option would only confuse.
+- **2026-07-26 — Every tag written must be true of the output.** That single rule decides
+  the whole M3 tag list: copy what still holds, derive what shifted, compute what can be
+  measured from the output, omit what became false. In particular `Orientation` and `Xmp`
+  are omitted because copying them is a bug, not a preference, and the exposure fields
+  split into shared optics (copied) and per-exposure values (omitted).
+- **2026-07-26 — `ColorSpace` is neither copied nor synthesized, for now.** Copying is
+  wrong: the tag describes the *source's* color encoding, and its value is device
+  specific. The Pixel samples say `Uncalibrated` (0xFFFF), which means "not sRGB, look at
+  the ICC profile or `InteropIndex`" — carried onto a frame that has neither, it tells a
+  color-managed reader to distrust sRGB and gives it nothing to use instead, so colors
+  can come out oversaturated. Another camera in Adobe RGB mode would write `Uncalibrated`
+  + `InteropIndex` `R03`, with the same problem. Synthesizing `1` (sRGB) is very likely
+  right for an SDR frame out of `Bitmap.compress`, but `:core-exif` cannot observe what
+  the encoder did, so that waits for M4. Omitting is technically non-conformant and in
+  practice identical to writing `1`, since readers default to sRGB for a JPEG with no
+  profile. Revisit once the encode path exists.
+- **2026-07-26 — Identifying tags are copied, not scrubbed.** `BodySerialNumber`,
+  `LensSerialNumber`, `CameraOwnerName` and `Artist` all come across. This app's purpose
+  is a frame as close to the original as the format allows; mainstream editors preserve
+  these, and a frame that silently lost fields the original had would be the surprising
+  result. Metadata stripping is a different app.
 
 ## Open questions to resolve with the human, not by guessing
 
@@ -308,6 +427,11 @@ Recorded so they are not re-litigated. Date them when they change.
   decides whether M4 can stay a single-file share target.
 - What counts as "nearest the default frame" for the byte-copy path — an exact
   timestamp match, or a tolerance window?
+- Does a real gallery actually reject a `Container:Directory` whose declared items no
+  longer match the file? The M4 note above says the byte-copy path must rewrite the XMP,
+  and our own parser certainly would reject it — but the user-visible consequence is
+  unverified. Needs a real file pushed through the path and opened in Google Photos and
+  a stock gallery before the rewrite is designed.
 - Should the preview path use approximate seeking and the save path exact? Measured drift
   with default `SeekParameters` was 8–36 ms against a 500 ms request — under one frame
   interval on every sample — so the default may already be good enough for saves. Not yet

@@ -7,6 +7,7 @@ lifecycleRuntimeKtx = "2.11.0"
 activityCompose = "1.13.0"
 composeBom = "2026.06.01"
 media3 = "1.10.1"
+exifinterface = "1.4.2"
 junit = "6.1.2"
 junitVersion = "1.1.5"
 espressoCore = "3.5.1"
@@ -39,6 +40,12 @@ androidx-media3-inspector-frame = { group = "androidx.media3", name = "media3-in
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
 androidx-media3-datasource = { group = "androidx.media3", name = "media3-datasource", version.ref = "media3" }
 androidx-media3-common = { group = "androidx.media3", name = "media3-common", version.ref = "media3" }
+
+# EXIF read/write on the extracted frame. Used for writing metadata onto the output
+# only — the Container directory is :core-motionphoto's job, because ExifInterface
+# deliberately prefers Exif tag 700 over a separate XMP segment on JPEG (a documented
+# backward-compatibility quirk that HEIC and PNG were fixed for and JPEG was not).
+androidx-exifinterface = { group = "androidx.exifinterface", name = "exifinterface", version.ref = "exifinterface" }
 
 # Testing — JUnit 6 (Jupiter) for local/JVM unit tests
 junit-bom = { group = "org.junit", name = "junit-bom", version.ref = "junit" }
