@@ -55,6 +55,15 @@ object MotionPhotoParser {
     private data class Item(val semantic: String?, val mime: String?, val length: Long?)
 
     /**
+     * Where the standard XMP packet's text sits, and what it says.
+     *
+     * [offset] and [length] locate the text *after* the `http://ns.adobe.com/xap/1.0/\0`
+     * prefix and within the array it was found in, so a caller editing the packet in
+     * place does not have to re-derive the prefix width.
+     */
+    internal data class XmpPacket(val offset: Int, val length: Int, val text: String)
+
+    /**
      * Random access to the source, so declared offsets can be checked against the bytes
      * actually there. A [File] is read lazily rather than pulled onto the heap — the
      * video item sits megabytes past the header window.
@@ -188,7 +197,17 @@ object MotionPhotoParser {
      * holds only `HDRPlusMakerNote`, so the container directory never needs the
      * multi-segment chunk reassembly extended XMP would otherwise demand.
      */
-    private fun findStandardXmp(header: ByteArray): String? {
+    private fun findStandardXmp(header: ByteArray): String? = findStandardXmpPacket(header)?.text
+
+    /**
+     * The standard XMP packet together with where it sits, or null if absent.
+     *
+     * [MotionPhotoStillWriter] needs the position as well as the text, because it edits
+     * the packet in place. Splitting that out here rather than duplicating the segment
+     * walk keeps one implementation of "which APP1 is the standard XMP" — the extended
+     * XMP segments carry the same marker and would otherwise be easy to confuse.
+     */
+    internal fun findStandardXmpPacket(header: ByteArray): XmpPacket? {
         var i = 2
         while (i + 3 < header.size) {
             if (header[i] != 0xFF.toByte()) return null
@@ -214,11 +233,11 @@ object MotionPhotoParser {
             if (payloadEnd > header.size) return null
 
             if (marker == 0xE1 && startsWith(header, payloadStart, payloadEnd, XMP_STANDARD_PREFIX)) {
-                return String(
-                    header,
-                    payloadStart + XMP_STANDARD_PREFIX.size,
-                    payloadEnd - payloadStart - XMP_STANDARD_PREFIX.size,
-                    Charsets.UTF_8,
+                val textStart = payloadStart + XMP_STANDARD_PREFIX.size
+                return XmpPacket(
+                    offset = textStart,
+                    length = payloadEnd - textStart,
+                    text = String(header, textStart, payloadEnd - textStart, Charsets.UTF_8),
                 )
             }
             i = payloadEnd
