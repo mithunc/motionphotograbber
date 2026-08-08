@@ -13,7 +13,11 @@ android {
 
     defaultConfig {
         applicationId = "xyz.mithunc.motionphotograbber"
-        minSdk = 26
+        // 29, not the cores' 26: MediaStore's RELATIVE_PATH and IS_PENDING arrive in Q,
+        // and the only pre-Q way to land a file in Pictures/ needs
+        // WRITE_EXTERNAL_STORAGE. Keeping the manifest permission-free is worth more
+        // than Android 8-9 support, which cannot produce these files anyway.
+        minSdk = 29
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
@@ -34,6 +38,9 @@ android {
     }
     buildFeatures {
         compose = true
+        // Off by default since AGP 8. Needed for BuildConfig.VERSION_NAME, which goes
+        // into the Software tag :core-exif writes onto every saved frame.
+        buildConfig = true
     }
     // Kotlin jvmTarget defaults to compileOptions.targetCompatibility (17) under
     // AGP built-in Kotlin, so no separate kotlin { } block is needed.
@@ -54,7 +61,12 @@ dependencies {
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.kotlinx.coroutines.android)
+
+    // EXIF is written on the output here, in :app, because only the encoder knows what
+    // it produced (see the ColorSpace override in FrameSaver).
+    implementation(libs.androidx.exifinterface)
 
     // Compose — versions resolved via the BOM.
     implementation(platform(libs.androidx.compose.bom))

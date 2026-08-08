@@ -1,3 +1,23 @@
 <resources>
     <string name="app_name">Motion Photo Grabber</string>
+
+    <string name="idle_prompt">Share a motion photo to this app, or open one below.</string>
+    <string name="open_photo">Open a photo</string>
+    <string name="open_another_photo">Open another photo</string>
+    <string name="save">Save frame</string>
+    <string name="saving">Saving…</string>
+
+    <string name="error_not_a_motion_photo">That is an ordinary photo — there is no motion clip inside it to pick a frame from.</string>
+    <string name="error_unsupported_flavor">That is a motion photo, but not a kind this app can read yet.</string>
+    <string name="error_malformed">This motion photo\'s structure doesn\'t hold together: %1$s</string>
+    <string name="error_unreadable">The file couldn\'t be read: %1$s</string>
+    <string name="error_decode_failed">The clip inside couldn\'t be decoded: %1$s</string>
+
+    <string name="saved">Saved %1$s to Pictures</string>
+    <string name="save_failed">Couldn\'t save: %1$s</string>
+
+    <string name="location_title">Copy location?</string>
+    <string name="location_rationale">Required to copy GPS coordinates into the saved frame. Without it the frame saves without a location.</string>
+    <string name="location_allow">Continue</string>
+    <string name="location_skip">Save without location</string>
 </resources>

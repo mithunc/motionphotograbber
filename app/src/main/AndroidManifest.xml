@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- No permissions are declared. In particular there is NO
-         android.permission.INTERNET: this app is fully offline by design
-         (see CLAUDE.md). -->
+    <!-- There is NO android.permission.INTERNET: this app is fully offline by design
+         (see CLAUDE.md).
+
+         ACCESS_MEDIA_LOCATION is the one permission declared, and it is unavoidable for
+         the app's core purpose. Android zeroes the GPS IFD on every ContentResolver read
+         — MediaStore and SAF alike — without it, so a saved frame would silently claim
+         0°,0° instead of where the photo was taken. Requested at the moment the user first
+         saves, and a denial simply means the frame saves without location. -->
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
 
     <application
         android:allowBackup="true"
@@ -23,6 +29,17 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Share target. Motion photos are JPEGs, so image/jpeg is the whole
+                 surface: a Pixel motion photo shared from any gallery arrives here.
+                 Deliberately not image/* — this app can only do something useful with
+                 a JPEG, and appearing in the share sheet for PNGs and GIFs it must
+                 immediately reject would be noise. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/jpeg" />
             </intent-filter>
         </activity>
     </application>

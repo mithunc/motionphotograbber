@@ -118,6 +118,33 @@ sample contradicts should be corrected here rather than worked around in code.
   a landscape clip sit inside a portrait photo. Hardcoding 90° would silently produce
   upside-down frames on 270° files.
 - The still is Ultra HDR: Primary JPEG plus GainMap, with `XMP-hdrgm` metadata.
+- **Sync samples are sparse, and that decides how the preview seeks.** Counted from the
+  `stss` boxes on 2026-07-26:
+
+  | Sample | Track | Duration | Samples | Sync samples | fps |
+  | --- | --- | --- | --- | --- | --- |
+  | `..._011104182` | 1440x1080 | 2.60 s | 75 | 11 | 28.8 |
+  | `..._051005777` | 1440x1080 | 2.08 s | 50 | 8 | 24.1 |
+  | `..._051005777` | 2048x1536 | 0.00 s | 1 | 1 | — (the decoy track) |
+  | `..._091528579` | 1440x1080 | 1.27 s | 20 | **3** | 15.7 |
+
+  Seeking to the nearest sync frame would show **three** distinct images across the whole
+  1.27 s clip. Exact seeking is therefore mandatory, not a preference — and it is cheap
+  here, at most ~7 frames of 1440x1080 HEVC decoded from the preceding keyframe. Frame
+  rates also vary far more than expected, and a 20-frame clip means a continuous slider
+  addresses only 20 distinct images.
+
+**The motion-photo declarations are not all in the container**
+
+Measured 2026-07-26 while building M4's byte-copy path. Beside the `Container:Directory`,
+`rdf:Description` carries `GCamera:MotionPhoto="1"`, `GCamera:MotionPhotoVersion="1"` and
+`GCamera:MotionPhotoPresentationTimestampUs`. `:core-motionphoto` ignores these — it goes
+by container items — but a gallery plausibly keys its play-button badge on the first.
+**Anything producing a plain still from a motion photo must clear these as well as the
+container item**, or the output announces a clip it does not contain. The XMP packet has
+no `<?xpacket>` wrapper and ~1 byte of trailing whitespace, so there is no slack to
+shrink into; `hdrgm:Version` and `xmpNote:HasExtendedXMP` sit outside the directory and
+must survive.
 
 **Tooling caveat**
 
@@ -359,6 +386,19 @@ File-based JPEG path needs the same treatment.
 **Done when:** the human confirms on-device that scrubbing is responsive and a saved
 file appears in their gallery with correct location and date.
 
+**Device run 2026-07-26** (Pixel 10 Pro XL, Android 16). Confirmed working: install; byte-exact
+`_original.jpg` (output size equals filesize − video length to the byte); full-resolution
+2736x3648 default-frame save; EXIF timestamps shifted by the signed frame offset at microsecond
+width; `DATE_TAKEN` set; upright rendering on the 270° sample; seeking accurate to the expected
+frame at five positions; preview and save landing on the same frame; both error states with
+specific, distinct messages; our own parser disowning our own output; and a cache holding one
+file with no accumulation. **Sharing verified by hand from Ente Photos and Google Photos.**
+
+Four defects found and fixed in a follow-up pass — see the 2026-07-26 decisions on GPS
+redaction, JVM-test blindness, seek throttling, and surface sizing. Two things the run could
+not settle and that remain open questions below: HDR rendering, and whether the location
+permission covers the SAF path.
+
 ### M5 — Polish
 
 Error states for non-motion-photos. Frame-step buttons (±1 frame). Optional PNG
@@ -413,6 +453,91 @@ Recorded so they are not re-litigated. Date them when they change.
   the encoder did, so that waits for M4. Omitting is technically non-conformant and in
   practice identical to writing `1`, since readers default to sRGB for a JPEG with no
   profile. Revisit once the encode path exists.
+- **2026-07-26 — `ACCESS_MEDIA_LOCATION` is declared, and it is the app's only permission.**
+  Android zeroes the GPS IFD on every `ContentResolver` read — MediaStore **and SAF** — without
+  it. Measured on device: the app's cached copy was byte-identical to the on-disk original
+  apart from **41 bytes in range 937–1162**, at the same total length, so nothing downstream
+  can detect the loss let alone recover it. Preserving GPS is the whole point of the app, so
+  the zero-permission manifest had to go. Requested **on first Save**, not on load or at
+  launch: redaction happens at read time, so a grant is only actionable by re-reading, and
+  asking at the moment the user commits to an output is the only place the request explains
+  itself. A denial saves without location and is never asked about again in that process.
+- **2026-07-29 — `ACCESS_MEDIA_LOCATION` alone is sufficient, including for SAF.** Measured by
+  granting only that permission with `READ_MEDIA_VISUAL_USER_SELECTED` explicitly *not* granted:
+  a document opened through `ACTION_OPEN_DOCUMENT` came back with real coordinates, and the
+  saved frame carried latitude, longitude, altitude, date stamp and image direction identical
+  to the source. **`READ_MEDIA_IMAGES` is not needed** and must not be added for this.
+- **2026-07-29 — The system permission dialog is broader than the request, and that is
+  unresolved.** `ACCESS_MEDIA_LOCATION` sits in the `READ_MEDIA_VISUAL` group, so requesting it
+  raises the group prompt — *"Allow Motion Photo Grabber to access photos and videos on this
+  device?"* with **Allow limited access / Allow all / Don't allow** — not a location-specific
+  one. Our own rationale says "required to copy GPS coordinates", which is true of what the app
+  does but reads as an understatement of what the system is about to ask for. Noted as an open
+  question below rather than papered over.
+- **2026-07-26 — The JVM tests structurally cannot catch a redaction bug.** They read
+  `samples/*.jpg` straight off disk and never cross a `ContentResolver`. Any future claim about
+  metadata must be verified against a file the app read through a `content://` Uri.
+- **2026-07-26 — Seeking must be throttled to one decode in flight.** The original M4 code
+  fired `seekTo` on every slider callback, justified by "ExoPlayer supersedes a seek still in
+  flight". That is true and it was exactly the bug: **superseding discards the in-flight decode
+  rather than accelerating it.** At ~60–120 callbacks a second against exact seeks needing up
+  to ~7 frames decoded from the preceding keyframe, every seek was killed by its successor and
+  nothing reached the screen until the finger stopped. `MotionPhotoPreviewPlayer` now pumps
+  from a `StateFlow` and waits for `onRenderedFirstFrame` before taking the next position, so
+  intermediate positions are skipped rather than queued and every decode that starts paints.
+- **2026-08-08 — A seek is "done" on `onRenderedFirstFrame` *or* `STATE_READY`, never the first
+  alone.** Waiting only on the render callback left fast scrubbing freezing in bursts. Traced:
+  **9 of 39 seeks produced no render callback at all**, and none arrived late either
+  (`staleSignals` was 0 throughout), so each burned the full timeout. The cause is that
+  `onRenderedFirstFrame` means "a *new* frame was painted", which a seek resolving to the frame
+  already on screen legitimately never does. `STATE_READY` reports that the seek resolved
+  regardless. After the change: **0 timeouts in 144 seeks, and the update rate went 5.9 → 16.9
+  per second** — saturating a clip that only holds 15.7 distinct frames per second. The two
+  callbacks proved near mutually exclusive in practice (1 stale signal in 144), which is the
+  diagnosis confirming itself.
+- **2026-08-08 — An exact seek costs 46–100 ms, median 72 (Pixel 10 Pro XL).** Measured, closing
+  the open question about seek cost. This is what sets the scrub update ceiling, and it is why
+  the settle timeout is 250 ms: comfortably above the observed maximum, so it only fires on a
+  genuinely missed signal, and cheap enough when it does that a miss is a hitch rather than the
+  half-second stall the original 500 ms produced. A decoded-frame cache would not obviously help
+  — the pump already updates faster than these clips contain distinct frames.
+- **2026-08-08 — The seek pump carries permanent, opt-in tracing.** `Log.isLoggable` gated behind
+  `adb shell setprop log.tag.MotionPhotoSeek VERBOSE`, silent otherwise. It is the only place
+  that knows both when a seek was issued and when it settled, and it earned its keep immediately
+  by distinguishing three candidate causes of the freeze that were indistinguishable by
+  inspection.
+- **2026-07-26 — The preview surface is sized from `VideoSize`, not stretched to fill.** A bare
+  `SurfaceView` scales content to its own bounds; the first M4 build handed it `fillMaxSize()`
+  and distorted every preview (measured: 1080x1440 video in a 1080x1622 box, correlation 0.9999
+  against a stretched candidate versus 0.7096 against an aspect-preserved one). Fixed with
+  `onVideoSizeChanged` plus a letterbox, **not** by adding `media3-ui` for `PlayerView`.
+  `VideoSize.unappliedRotationDegrees` is deliberately *not* consulted: it is deprecated in
+  1.10.1, and `onVideoSizeChanged` already reports the size of frames as rendered, so correcting
+  for rotation here would transpose the one case it was meant to fix.
+- **2026-07-26 — The scrub preview is a paused player, not repeated frame extraction.**
+  `FrameExtractor` documents nothing about concurrent `getFrame` calls, and cancelling one
+  only calls `cancel(false)` on the future, so a superseded decode runs to completion
+  regardless — a debounce plus a mutex would be mitigating that rather than solving it.
+  ExoPlayer preempts a pending seek natively and renders to a hardware surface, which is
+  also how stock galleries scrub these. `MotionPhotoFrameExtractor` keeps the save path,
+  where one exact full-resolution `Bitmap` is exactly what is wanted.
+- **2026-07-26 — Both paths seek exactly**, closing the "approximate for preview, exact
+  for save?" question. The sync-sample counts above are the reason; `CLOSEST_SYNC` is a
+  trap that looks like an optimization.
+- **2026-07-26 — "Nearest the default frame" is a snap detent**, not a tolerance window.
+  The slider magnetizes to `defaultFrameTimestampUs` within 2% of the clip and lands on it
+  exactly, so "should this byte-copy?" stays an equality test and the quality cliff sits
+  at a position the user can feel. An unlabeled tick marks it; there is deliberately no
+  text about the resolution or HDR difference, per the 2026-07-20 decision.
+- **2026-07-26 — `ColorSpace` is written as `1` (sRGB), closing the deferral above.**
+  `:core-exif` still cannot observe the encoder, which is why it remains omitted there —
+  but `:app` *is* the encoder, so it supplies the value through `copyMetadata`'s
+  `overrides`. That parameter existing for exactly this case is why no signature changed.
+- **2026-07-26 — `MediaStore.DATE_TAKEN` is derived in `:core-exif`, not `:app`.**
+  `ExifInterface.getDateTimeOriginal` is `@RestrictTo(LIBRARY)` — it compiles from outside
+  the library and only `lint` objects — so `ExifMetadataCopier.readCaptureTimeMs` resolves
+  the wall-clock time and `OffsetTimeOriginal` instead, keeping Exif date handling in one
+  module.
 - **2026-07-26 — Identifying tags are copied, not scrubbed.** `BodySerialNumber`,
   `LensSerialNumber`, `CameraOwnerName` and `Artist` all come across. This app's purpose
   is a frame as close to the original as the format allows; mainstream editors preserve
@@ -425,8 +550,36 @@ Recorded so they are not re-litigated. Date them when they change.
 - Apple Live Photos are a still plus a *separate* `.MOV`, not one container. Should the
   v1 types accommodate a two-file source now, or is a later refactor accepted? This also
   decides whether M4 can stay a single-file share target.
-- What counts as "nearest the default frame" for the byte-copy path — an exact
-  timestamp match, or a tolerance window?
+- **How should the location prompt be worded, given the system asks for more than we want?**
+  See the 2026-07-29 decision above: the system escalates to "access photos and videos on this
+  device". Options not yet weighed — reword our rationale to name what the user will actually
+  see, drop the custom dialog and let the system prompt speak for itself, or accept the mismatch.
+  Worth deciding deliberately because it is a consent question, not a copy question.
+- **Should the library-injected permissions be stripped?** The merged manifest requests
+  `ACCESS_NETWORK_STATE` (from `media3-common` and `media3-exoplayer`), `WAKE_LOCK` (from
+  `media3-exoplayer`) and `READ_MEDIA_VISUAL_USER_SELECTED`, none of them declared by this
+  project. `INTERNET` is confirmed absent, so the hard constraint holds — but two network/wake
+  permissions on an F-Droid listing sit badly against "No network access" in the non-goals. They
+  can be dropped with `tools:node="remove"`; the risk is that Media3's `NetworkTypeObserver`
+  touches `ConnectivityManager`, which throws `SecurityException` without the permission. Needs
+  a device test before committing, since a crash on a path we never exercise is worse than a
+  permission we never use.
+- **Does a gallery actually render the byte-copied original as HDR?** Structure is verified —
+  gain map at the expected offset, `hdrgm:Version` intact, XMP packet length unchanged — but
+  whether Google Photos or a stock gallery *displays* it as HDR is not, and a `screencap` round
+  trip cannot answer it because it hands back a tonemapped SDR PNG. Needs a human looking at an
+  HDR-capable screen.
+- **Does the preview show exactly the frame the save writes?** M4 previews through
+  ExoPlayer and saves through `FrameExtractor` — two decoders, both exact-seeking the same
+  track, so they should agree, but measured `FrameExtractor` drift of 8–36 ms is just over
+  one frame interval at 28.8 fps. Mitigated by handing the player's *settled* position to
+  the save rather than the slider's requested one; that makes agreement likely, not
+  guaranteed. Accepted as an MVP compromise on 2026-07-26 with the requirement that the
+  user saves exactly what they saw. Two candidate real fixes: render the player to an
+  `ImageReader`-backed surface at native resolution so one decoder serves both, or
+  quantize the slider to real frame boundaries read from `stts` (which also makes M5's
+  frame-step buttons fall out). Capturing the `SurfaceView` with `PixelCopy` is not a
+  candidate — it yields display resolution, not native.
 - Does a real gallery actually reject a `Container:Directory` whose declared items no
   longer match the file? The M4 note above says the byte-copy path must rewrite the XMP,
   and our own parser certainly would reject it — but the user-visible consequence is
