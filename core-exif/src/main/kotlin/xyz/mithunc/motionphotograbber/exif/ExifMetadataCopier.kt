@@ -20,6 +20,8 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
 import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import kotlin.time.Duration
@@ -153,6 +155,41 @@ object ExifMetadataCopier {
         } catch (e: IOException) {
             CopyResult.DestinationUnwritable(e.message ?: "could not write ${to.file.name}")
         }
+    }
+
+    /**
+     * When [from] was captured, as epoch milliseconds, or null if it does not say.
+     *
+     * Exists because `MediaStore.DATE_TAKEN` needs an instant, and an Exif capture time is
+     * not one — it is a wall-clock reading whose zone lives in a separate tag. Resolving
+     * that is this module's job: `ExifInterface`'s own `getDateTimeOriginal` is
+     * `@RestrictTo(LIBRARY)`, so a caller outside the library has no supported way to ask,
+     * and re-deriving the parse elsewhere would put Exif date handling in two places.
+     *
+     * Falls back to the device's current zone when `OffsetTimeOriginal` is absent, which
+     * is the same assumption every gallery makes about an offset-less capture time.
+     */
+    fun readCaptureTimeMs(from: JpegFile): Long? {
+        val exif = try {
+            ExifInterface(from.file)
+        } catch (_: IOException) {
+            return null
+        }
+        val captured = exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL) ?: return null
+        val parsed = try {
+            LocalDateTime.parse(captured, EXIF_DATE_TIME)
+        } catch (_: DateTimeParseException) {
+            return null
+        }
+        val zone = exif.getAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL)
+            ?.let { runCatching { ZoneOffset.of(it.trim()) }.getOrNull() }
+            ?: ZoneId.systemDefault()
+
+        return parsed
+            .plusNanos(subSecondNanos(exif.getAttribute(ExifInterface.TAG_SUBSEC_TIME_ORIGINAL)))
+            .atZone(zone)
+            .toInstant()
+            .toEpochMilli()
     }
 
     /**
