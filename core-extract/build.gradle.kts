@@ -32,12 +32,16 @@ android {
 
 dependencies {
     implementation(project(":core-motionphoto"))
-    implementation(libs.kotlinx.coroutines.core)
+    // `api` because MotionPhotoPreviewPlayer exposes a StateFlow.
+    api(libs.kotlinx.coroutines.core)
 
     implementation(libs.androidx.media3.inspector.frame)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.datasource)
-    implementation(libs.androidx.media3.common)
+    // `api`, not `implementation`: MotionPhotoFrameExtractor is annotated @UnstableApi,
+    // which lives in media3-common. Under `implementation` that annotation is off the
+    // consumer's compile classpath and Kotlin cannot resolve it at the call site.
+    api(libs.androidx.media3.common)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
