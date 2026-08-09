@@ -16,6 +16,7 @@
 package xyz.mithunc.motionphotograbber
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Application
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -62,24 +63,9 @@ sealed interface GrabberEvent {
 @UnstableApi
 class GrabberViewModel(application: Application) : AndroidViewModel(application) {
 
-    companion object {
-        /**
-         * How close to the shutter-press frame counts as parked on it, as a fraction of
-         * the clip.
-         *
-         * A magnet rather than a tolerance: the position snaps to exactly the default
-         * once inside it, so "at the default frame" stays an equality test and the save
-         * path never has to decide how near is near enough. Two percent of a 2.6 s clip
-         * is ~50 ms, about a thumb's width of slider.
-         */
-        private const val SNAP_FRACTION = 0.02f
-
-        private const val LOCATION_PERMISSION = Manifest.permission.ACCESS_MEDIA_LOCATION
-    }
-
     /** One open photo: the file, what parsing found in it, and the decoder on it. */
     private class Session(
-        var source: SourceFile,
+        var source: SourcePhoto,
         var found: MotionPhoto.Found,
         val player: MotionPhotoPreviewPlayer,
     )
@@ -98,6 +84,7 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
      * which is the normal order for a share intent. Nulled on dispose, so it does not
      * outlive the composable that made it.
      */
+    @SuppressLint("StaticFieldLeak")
     private var surfaceView: SurfaceView? = null
 
     /**
@@ -105,7 +92,7 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
      *
      * A rotation destroys the composition, so the `LaunchedEffect` that delivers a share
      * intent runs again with the same Uri — without this the file would be re-copied and
-     * re-parsed on every turn of the device, resetting the scrub position each time.
+     * reparsed on every turn of the device, resetting the scrub position each time.
      */
     private var loadedUri: Uri? = null
 
@@ -119,7 +106,7 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
     private var locationAsked = false
 
     /** The `Software` string of a save paused waiting on the permission result. */
-    private var pendingSaveSoftware: String? = null
+    private var pendingSaveEditingSoftware: String? = null
 
     /** Opens [uri], unless it is already the open one. */
     fun loadIfNeeded(uri: Uri) {
@@ -138,11 +125,11 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
             // common repeat-user case needs no re-read at save time.
             val withLocation = hasLocationPermission()
             val opened = withContext(Dispatchers.IO) {
-                SourceFile.copyFrom(context, uri, withLocation)
+                SourcePhoto.copyFrom(context, uri, withLocation)
             }
             val source = when (opened) {
-                is SourceFile.Result.Opened -> opened.source
-                is SourceFile.Result.Failed -> {
+                is SourcePhoto.Result.Opened -> opened.source
+                is SourcePhoto.Result.Failed -> {
                     _uiState.value = UiState.Failed(LoadError.Unreadable(opened.reason))
                     return@launch
                 }
@@ -165,7 +152,7 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun fail(error: LoadError) {
-        SourceFile.clearCache(getApplication())
+        SourcePhoto.clearCache(getApplication())
         _uiState.value = UiState.Failed(error)
     }
 
@@ -228,7 +215,7 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
         return if (kotlin.math.abs(clamped - default) <= window) default else clamped
     }
 
-    fun save(software: String) {
+    fun save(editingSoftware: String) {
         val current = session ?: return
         val state = _uiState.value as? UiState.Ready ?: return
         if (state.saving) return
@@ -242,18 +229,18 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
                 // loaded this photo before the grant. Nothing to ask; just re-read and save.
                 viewModelScope.launch {
                     refreshSourceWithLocation()
-                    performSave(software)
+                    performSave(editingSoftware)
                 }
                 return
             }
             if (!locationAsked) {
                 locationAsked = true
-                pendingSaveSoftware = software
+                pendingSaveEditingSoftware = editingSoftware
                 viewModelScope.launch { _events.send(GrabberEvent.NeedsLocationPermission) }
                 return
             }
         }
-        performSave(software)
+        performSave(editingSoftware)
     }
 
     /**
@@ -263,11 +250,11 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
      * outcome the app had before the permission existed.
      */
     fun onLocationPermissionResult(granted: Boolean) {
-        val software = pendingSaveSoftware ?: return
-        pendingSaveSoftware = null
+        val editingSoftware = pendingSaveEditingSoftware ?: return
+        pendingSaveEditingSoftware = null
         viewModelScope.launch {
             if (granted) refreshSourceWithLocation()
-            performSave(software)
+            performSave(editingSoftware)
         }
     }
 
@@ -283,14 +270,14 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
         val current = session ?: return
         val context = getApplication<Application>()
         val refreshed = withContext(Dispatchers.IO) { current.source.refresh(context, withLocation = true) }
-        if (refreshed !is SourceFile.Result.Opened) return
+        if (refreshed !is SourcePhoto.Result.Opened) return
         val parsed = withContext(Dispatchers.IO) { MotionPhotoParser.parse(refreshed.source.file) }
         if (parsed !is MotionPhoto.Found) return
         current.source = refreshed.source
         current.found = parsed
     }
 
-    private fun performSave(software: String) {
+    private fun performSave(editingSoftware: String) {
         val current = session ?: return
         val state = _uiState.value as? UiState.Ready ?: return
         _uiState.value = state.copy(saving = true)
@@ -305,7 +292,7 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
                 found = current.found,
                 positionMs = positionMs,
                 atDefaultFrame = state.atDefaultFrame,
-                software = software,
+                editingSoftware = editingSoftware,
             )
             (_uiState.value as? UiState.Ready)?.let { _uiState.value = it.copy(saving = false) }
             _events.send(GrabberEvent.SaveFinished(result))
@@ -337,12 +324,26 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
         previewJob = null
         session?.player?.close()
         session = null
-        pendingSaveSoftware = null
-        SourceFile.clearCache(getApplication())
+        pendingSaveEditingSoftware = null
+        SourcePhoto.clearCache(getApplication())
     }
 
     override fun onCleared() {
-        super.onCleared()
         closeSession()
+    }
+
+    companion object {
+        /**
+         * How close to the shutter-press frame counts as parked on it, as a fraction of
+         * the clip.
+         *
+         * A magnet rather than a tolerance: the position snaps to exactly the default
+         * once inside it, so "at the default frame" stays an equality test and the save
+         * path never has to decide how near is near enough. Two percent of a 2.6 s clip
+         * is ~50 ms, about a thumb's width of slider.
+         */
+        private const val SNAP_FRACTION = 0.02f
+
+        private const val LOCATION_PERMISSION = Manifest.permission.ACCESS_MEDIA_LOCATION
     }
 }

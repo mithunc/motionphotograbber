@@ -90,7 +90,7 @@ private fun GrabberApp(initialUri: Uri?) {
     val appName = stringResource(R.string.app_name)
     // SPEC.md requires the Software tag to name the producing app and its version, and
     // :core-exif deliberately takes it as a parameter because neither belongs there.
-    val software = remember(appName) { "$appName ${BuildConfig.VERSION_NAME}" }
+    val editingSoftware = remember(appName) { "$appName ${BuildConfig.VERSION_NAME}" }
 
     // The system permission dialog cannot carry custom text, so the reason has to be ours
     // and has to come first. Requested only when a save actually needs it.
@@ -147,7 +147,7 @@ private fun GrabberApp(initialUri: Uri?) {
         // and offering one in the picker would only produce an error.
         onPickFile = { picker.launch(arrayOf("image/jpeg")) },
         onScrub = viewModel::onScrub,
-        onSave = { viewModel.save(software) },
+        onSave = { viewModel.save(editingSoftware) },
         onSurfaceCreated = viewModel::attachSurface,
         onSurfaceDisposed = viewModel::detachSurface,
     )

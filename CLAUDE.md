@@ -126,7 +126,7 @@ When in doubt, ask the human to paste current docs rather than guessing.
   none currently do.
 - American English throughout — identifiers, comments, and prose. `Flavor`, not
   `Flavour`.
-- Constants go at the top of a class or object, not next to their first use.
+- Companion objects go at the bottom of a class.
 - Nested type declarations go at the top as well, above the functions.
 - Sealed classes/interfaces for result and error states. No exceptions across module
   boundaries for expected failures (e.g. "this file is not a motion photo").

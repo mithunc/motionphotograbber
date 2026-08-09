@@ -99,7 +99,7 @@ object ExifMetadataCopier {
     private const val SUB_SECOND_OUTPUT_FORMAT = "%06d"
 
     /**
-     * @param software identifies the producing app, written to `Software`. Supplied by
+     * @param editingSoftware identifies the producing app, written to `Software`. Supplied by
      *   the caller rather than hardcoded because both the app's name and its version are
      *   subject to change, and neither belongs in this module.
      * @param frameOffset signed position of the extracted frame relative to the shutter
@@ -113,7 +113,7 @@ object ExifMetadataCopier {
     fun copyMetadata(
         from: JpegFile,
         to: JpegFile,
-        software: String,
+        editingSoftware: String,
         frameOffset: Duration,
         overrides: Map<String, String> = emptyMap(),
     ): CopyResult {
@@ -142,7 +142,7 @@ object ExifMetadataCopier {
         // photo — would have every viewer rotate an upright frame another 90 degrees.
         // Written explicitly rather than left absent so the intent survives a future edit.
         attributes[ExifInterface.TAG_ORIENTATION] = ExifInterface.ORIENTATION_NORMAL.toString()
-        attributes[ExifInterface.TAG_SOFTWARE] = software
+        attributes[ExifInterface.TAG_SOFTWARE] = editingSoftware
         attributes += overrides
 
         for ((tag, value) in attributes) {

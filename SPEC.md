@@ -263,7 +263,7 @@ non-null, correct dimensions.
 fun copyMetadata(
     from: JpegFile,
     to: JpegFile,
-    software: String,
+    editingSoftware: String,
     frameOffset: Duration,
     overrides: Map<String, String> = emptyMap(),
 ): CopyResult

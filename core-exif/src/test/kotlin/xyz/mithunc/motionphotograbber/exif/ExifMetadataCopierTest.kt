@@ -99,7 +99,7 @@ class ExifMetadataCopierTest {
         val result = ExifMetadataCopier.copyMetadata(
             from = source,
             to = frame,
-            software = SOFTWARE,
+            editingSoftware = SOFTWARE,
             frameOffset = frameOffset,
             overrides = overrides,
         )
@@ -308,7 +308,7 @@ class ExifMetadataCopierTest {
         val result = ExifMetadataCopier.copyMetadata(
             from = source,
             to = frame,
-            software = SOFTWARE,
+            editingSoftware = SOFTWARE,
             frameOffset = Duration.ZERO,
         )
 

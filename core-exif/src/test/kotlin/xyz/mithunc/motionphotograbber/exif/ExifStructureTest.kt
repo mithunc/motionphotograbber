@@ -107,7 +107,7 @@ class ExifStructureTest {
         val result = ExifMetadataCopier.copyMetadata(
             from = JpegFile.of(source)!!,
             to = JpegFile.of(frame)!!,
-            software = "Motion Photo Grabber (test)",
+            editingSoftware = "Motion Photo Grabber (test)",
             frameOffset = Duration.ZERO,
         )
         assertTrue(result is CopyResult.Success, "copy failed: $result")
@@ -154,7 +154,7 @@ class ExifStructureTest {
         ExifMetadataCopier.copyMetadata(
             from = JpegFile.of(source)!!,
             to = JpegFile.of(frame)!!,
-            software = "Motion Photo Grabber (test)",
+            editingSoftware = "Motion Photo Grabber (test)",
             frameOffset = Duration.ZERO,
         )
 

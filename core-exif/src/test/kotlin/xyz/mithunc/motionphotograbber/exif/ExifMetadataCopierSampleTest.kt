@@ -100,7 +100,7 @@ class ExifMetadataCopierSampleTest {
             val result = ExifMetadataCopier.copyMetadata(
                 from = source,
                 to = frame,
-                software = SOFTWARE,
+                editingSoftware = SOFTWARE,
                 frameOffset = frameOffset,
             )
             assertTrue(result is CopyResult.Success, "copy failed for ${sample.name}: $result")

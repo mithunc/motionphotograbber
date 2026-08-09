@@ -39,7 +39,7 @@ import java.io.IOException
  * kind of copy this is, and [refresh] exists so a permission granted later can be acted on
  * without making the user pick the file again.
  */
-class SourceFile private constructor(
+class SourcePhoto private constructor(
     val file: File,
     /** The source's own name, used to derive the saved file's. */
     val displayName: String,
@@ -51,7 +51,7 @@ class SourceFile private constructor(
     /** The outcome of copying a source into the cache. */
     sealed interface Result {
 
-        data class Opened(val source: SourceFile) : Result
+        data class Opened(val source: SourcePhoto) : Result
 
         /**
          * [reason] carries the underlying failure, not a restatement of the question.
@@ -62,20 +62,6 @@ class SourceFile private constructor(
     }
 
     companion object {
-        private const val CACHE_SUBDIR = "sources"
-
-        /**
-         * Two slots, keyed by whether the copy carries location.
-         *
-         * They are separate files rather than one reused name because a located re-read
-         * happens *while the preview player holds the redacted file open*. Rewriting
-         * underneath it would leave a prefetching decoder reading a half-written file — and
-         * "a paused player does not read" is an assumption about Media3's buffering that this
-         * project has no business relying on. Writing elsewhere makes the question moot.
-         */
-        private const val SLOT_REDACTED = "source.jpg"
-        private const val SLOT_LOCATED = "source-located.jpg"
-
         /**
          * Copies [uri] into the app's cache.
          *
@@ -98,7 +84,7 @@ class SourceFile private constructor(
                     }
                     destination.outputStream().use(input::copyTo)
                 }
-                Result.Opened(SourceFile(destination, name, uri, withLocation))
+                Result.Opened(SourcePhoto(destination, name, uri, withLocation))
             } catch (e: IOException) {
                 destination.delete()
                 Result.Failed(e.reason())
@@ -125,9 +111,6 @@ class SourceFile private constructor(
         private fun requireOriginal(uri: Uri): Uri =
             if (uri.authority == MediaStore.AUTHORITY) MediaStore.setRequireOriginal(uri) else uri
 
-        private fun Exception.reason(): String =
-            message?.takeIf(String::isNotBlank) ?: (this::class.simpleName ?: "unknown error")
-
         /**
          * Removes every cached copy.
          *
@@ -144,6 +127,20 @@ class SourceFile private constructor(
                 ?.use { cursor ->
                     if (cursor.moveToFirst()) cursor.getString(0)?.takeIf(String::isNotBlank) else null
                 }
+
+        private const val CACHE_SUBDIR = "sources"
+
+        /**
+         * Two slots, keyed by whether the copy carries location.
+         *
+         * They are separate files rather than one reused name because a located re-read
+         * happens *while the preview player holds the redacted file open*. Rewriting
+         * underneath it would leave a prefetching decoder reading a half-written file — and
+         * "a paused player does not read" is an assumption about Media3's buffering that this
+         * project has no business relying on. Writing elsewhere makes the question moot.
+         */
+        private const val SLOT_REDACTED = "source.jpg"
+        private const val SLOT_LOCATED = "source-located.jpg"
     }
 
     /**

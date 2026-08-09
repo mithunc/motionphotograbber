@@ -23,7 +23,6 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
 import androidx.media3.common.util.UnstableApi
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import xyz.mithunc.motionphotograbber.exif.CopyResult
@@ -60,23 +59,6 @@ sealed interface SaveResult {
 @UnstableApi
 class FrameSaver(private val context: Context) {
 
-    companion object {
-        /**
-         * Visually lossless, and the frame has already been through HEVC — pushing to 100
-         * would preserve the decoder's artifacts at two to three times the size rather
-         * than preserve any detail. SPEC.md defers a user-facing quality setting to M5.
-         */
-        private const val JPEG_QUALITY = 95
-
-        private const val CACHE_SUBDIR = "outputs"
-
-        /**
-         * Names are zero-padded so lexicographic order matches clip order. Four digits
-         * covers the 1-3 s clips these files carry; a longer one simply grows the field.
-         */
-        private const val POSITION_FORMAT = "%04dms"
-    }
-
     /**
      * @param positionMs where in the clip to save from. Should be the player's *settled*
      *   position, not the one the slider asked for — what the user is looking at is the
@@ -85,11 +67,11 @@ class FrameSaver(private val context: Context) {
      *   which selects the original-bytes path.
      */
     suspend fun save(
-        source: SourceFile,
+        source: SourcePhoto,
         found: MotionPhoto.Found,
         positionMs: Long,
         atDefaultFrame: Boolean,
-        software: String,
+        editingSoftware: String,
     ): SaveResult {
         val outputDir = File(context.cacheDir, CACHE_SUBDIR).apply { mkdirs() }
         val staging = File(outputDir, "staged.jpg")
@@ -100,7 +82,7 @@ class FrameSaver(private val context: Context) {
         val prepared = if (atDefaultFrame) {
             withContext(Dispatchers.IO) { writeOriginalStill(source, found, staging) }
         } else {
-            encodeFrame(source, found, positionMs, staging, software)
+            encodeFrame(source, found, positionMs, staging, editingSoftware)
         }
         if (prepared != null) {
             staging.delete()
@@ -122,7 +104,7 @@ class FrameSaver(private val context: Context) {
 
     /** Returns null on success, or a reason. */
     private fun writeOriginalStill(
-        source: SourceFile,
+        source: SourcePhoto,
         found: MotionPhoto.Found,
         staging: File,
     ): String? =
@@ -133,25 +115,19 @@ class FrameSaver(private val context: Context) {
 
     /** Returns null on success, or a reason. */
     private suspend fun encodeFrame(
-        source: SourceFile,
+        source: SourcePhoto,
         found: MotionPhoto.Found,
         positionMs: Long,
         staging: File,
-        software: String,
+        editingSoftware: String,
     ): String? {
-        val bitmap = try {
-            MotionPhotoFrameExtractor.create(context, source.file, found.videoByteRange).use {
-                it.frameAt(positionMs).bitmap
+        val bitmap = MotionPhotoFrameExtractor.create(context, source.file, found.videoByteRange)
+            .use { extractor ->
+                when (val result = extractor.frameAt(positionMs)) {
+                    is MotionPhotoFrameExtractor.Result.Success -> result.frame.bitmap
+                    is MotionPhotoFrameExtractor.Result.Failed -> return result.reason
+                }
             }
-        } catch (e: CancellationException) {
-            // Must propagate: swallowing it here would report a decode failure for what
-            // is actually the user having moved on, and would leave the coroutine running.
-            throw e
-        } catch (e: Exception) {
-            // Media3 surfaces decoder trouble as a bare ExecutionException cause, so
-            // there is no narrower type worth naming.
-            return e.message ?: "the frame at ${positionMs}ms could not be decoded"
-        }
 
         return withContext(Dispatchers.IO) {
             try {
@@ -169,7 +145,7 @@ class FrameSaver(private val context: Context) {
                 val copied = ExifMetadataCopier.copyMetadata(
                     from = from,
                     to = to,
-                    software = software,
+                    editingSoftware = editingSoftware,
                     frameOffset = frameOffset(found, positionMs),
                     // :core-exif cannot see what the encoder did, so it omits ColorSpace
                     // rather than guess (SPEC.md, 2026-07-26). Here we know: Bitmap.compress
@@ -245,5 +221,22 @@ class FrameSaver(private val context: Context) {
             null,
             null,
         )
+    }
+
+    companion object {
+        /**
+         * Visually lossless, and the frame has already been through HEVC — pushing to 100
+         * would preserve the decoder's artifacts at two to three times the size rather
+         * than preserve any detail. SPEC.md defers a user-facing quality setting to M5.
+         */
+        private const val JPEG_QUALITY = 95
+
+        private const val CACHE_SUBDIR = "outputs"
+
+        /**
+         * Names are zero-padded so lexicographic order matches clip order. Four digits
+         * covers the 1-3 s clips these files carry; a longer one simply grows the field.
+         */
+        private const val POSITION_FORMAT = "%04dms"
     }
 }

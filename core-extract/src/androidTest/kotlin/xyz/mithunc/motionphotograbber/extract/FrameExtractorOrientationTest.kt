@@ -23,6 +23,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Assume.assumeFalse
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -119,7 +120,12 @@ class FrameExtractorOrientationTest {
 
             MotionPhotoFrameExtractor.create(context, sample, parsed.videoByteRange).use { extractor ->
                 val info = extractor.readVideoInfo()
-                val frame = runBlocking { extractor.frameAt(PROBE_POSITION_MS) }
+                val decoded = runBlocking { extractor.frameAt(PROBE_POSITION_MS) }
+                if (decoded !is MotionPhotoFrameExtractor.Result.Success) {
+                    fail("${sample.name}: $decoded")
+                    return@use
+                }
+                val frame = decoded.frame
 
                 Log.i(TAG, "=== ${sample.name} ===")
                 Log.i(TAG, "  declared: ${info.declaredWidth}x${info.declaredHeight}")

@@ -57,7 +57,7 @@ import xyz.mithunc.motionphotograbber.R
  *
  * Stateless. The preview is a [SurfaceView] the player draws into rather than a bitmap in
  * state, so scrubbing does not go through recomposition at all — [onSurfaceCreated] hands
- * the view over once and frames arrive on it directly afterwards.
+ * the view over once and frames arrive on it directly afterward.
  */
 @Composable
 fun GrabberScreen(
