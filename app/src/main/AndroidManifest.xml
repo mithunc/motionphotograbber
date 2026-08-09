@@ -1,47 +1,56 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- There is NO android.permission.INTERNET: this app is fully offline by design
-         (see CLAUDE.md).
+  <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
 
-         ACCESS_MEDIA_LOCATION is the one permission declared, and it is unavoidable for
-         the app's core purpose. Android zeroes the GPS IFD on every ContentResolver read
-         — MediaStore and SAF alike — without it, so a saved frame would silently claim
-         0°,0° instead of where the photo was taken. Requested at the moment the user first
-         saves, and a denial simply means the frame saves without location. -->
-    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+  <!-- Media3 declares ACCESS_NETWORK_STATE for adaptive-streaming bandwidth estimation,
+       which this app has no use for: it decodes a byte range of a local file and never
+       opens a socket. Left in place it would appear on the F-Droid listing, which reads
+       badly against the "no network access" non-goal.
 
-    <application
-        android:allowBackup="true"
-        android:dataExtractionRules="@xml/data_extraction_rules"
-        android:fullBackupContent="@xml/backup_rules"
-        android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_round"
-        android:supportsRtl="true"
-        android:theme="@style/Theme.MotionPhotoGrabber">
+       Removing it is safe because Media3 treats the permission as optional. Traced in the
+       1.10.1 sources: ExoPlayerImpl's constructor eagerly builds DefaultBandwidthMeter,
+       which constructs NetworkTypeObserver, whose ConnectivityManager query is wrapped in
+       `catch (SecurityException e) { // Expected if permission was revoked }` and falls
+       back to NETWORK_TYPE_UNKNOWN. The API 31 5G-disambiguation path likewise catches
+       RuntimeException. The only other ConnectivityManager user, RequirementsWatcher, is
+       reachable only from DownloadManager, which this app never constructs. -->
+  <uses-permission
+    android:name="android.permission.ACCESS_NETWORK_STATE"
+    tools:node="remove" />
 
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:label="@string/app_name"
-            android:theme="@style/Theme.MotionPhotoGrabber">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+  <application
+    android:allowBackup="true"
+    android:dataExtractionRules="@xml/data_extraction_rules"
+    android:fullBackupContent="@xml/backup_rules"
+    android:icon="@mipmap/ic_launcher"
+    android:label="@string/app_name"
+    android:roundIcon="@mipmap/ic_launcher_round"
+    android:supportsRtl="true"
+    android:theme="@style/Theme.MotionPhotoGrabber">
 
-            <!-- Share target. Motion photos are JPEGs, so image/jpeg is the whole
-                 surface: a Pixel motion photo shared from any gallery arrives here.
-                 Deliberately not image/* — this app can only do something useful with
-                 a JPEG, and appearing in the share sheet for PNGs and GIFs it must
-                 immediately reject would be noise. -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="image/jpeg" />
-            </intent-filter>
-        </activity>
-    </application>
+    <activity
+    android:name=".MainActivity"
+      android:exported="true"
+      android:label="@string/app_name"
+      android:theme="@style/Theme.MotionPhotoGrabber">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+
+      <!-- Share target. Motion photos are JPEGs, so image/jpeg is the whole
+           surface: a Pixel motion photo shared from any gallery arrives here.
+           Deliberately not image/* — this app can only do something useful with
+           a JPEG, and appearing in the share sheet for PNGs and GIFs it must
+           immediately reject would be noise. -->
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="image/jpeg" />
+      </intent-filter>
+    </activity>
+  </application>
 
 </manifest>

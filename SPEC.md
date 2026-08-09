@@ -538,6 +538,30 @@ Recorded so they are not re-litigated. Date them when they change.
   the library and only `lint` objects — so `ExifMetadataCopier.readCaptureTimeMs` resolves
   the wall-clock time and `OffsetTimeOriginal` instead, keeping Exif date handling in one
   module.
+- **2026-08-08 — `ACCESS_NETWORK_STATE` is stripped; `WAKE_LOCK` is left in place.** Media3
+  declares the network permission for adaptive-streaming bandwidth estimation, which this app
+  cannot use — it decodes a byte range of a local file and never opens a socket — so it was
+  removed with `tools:node="remove"`. Safe because Media3 treats it as optional, traced through
+  the 1.10.1 sources rather than assumed: `ExoPlayerImpl`'s constructor eagerly builds
+  `DefaultBandwidthMeter`, which constructs `NetworkTypeObserver`, whose `ConnectivityManager`
+  query is wrapped in `catch (SecurityException e) { // Expected if permission was revoked }`
+  and degrades to `NETWORK_TYPE_UNKNOWN`. **The path is reached on every player construction,
+  not rarely** — both `MotionPhotoPreviewPlayer` and `FrameExtractor`'s internal player hit it —
+  which is what made a device test mandatory rather than cautious. Verified on device
+  2026-08-08: no `SecurityException` in logcat across both paths, and `aapt2 dump permissions`
+  on the APK shows the permission gone. `WAKE_LOCK` was **not** stripped: it has no privacy
+  dimension, ExoPlayer only acquires it behind `setWakeMode()` which this app never calls, and
+  the sole benefit would be a tidier F-Droid listing — not worth a manifest override that a
+  future Media3 upgrade could silently invalidate.
+- **2026-08-08 — `tools:selector` cannot scope the removal of a permission two libraries
+  declare.** Scoping was tried first, being the better record of intent. It does not work here:
+  `ACCESS_NETWORK_STATE` comes from both `media3-common` and `media3-exoplayer`, a selector names
+  exactly one library, and covering both needs two same-named `uses-permission` nodes — which the
+  merger treats as a duplicate-key collision. It warns `duplicated with element declared at`,
+  **ignores `tools:node="remove"` entirely, and emits the permission twice.** The failure is
+  silent-by-construction: the build stays green and only a warning separates it from success, so
+  the scoped form keeps the permission while looking like it removes it. Caught by reading the
+  merged manifest and the merger report, which is the only reliable check on a manifest override.
 - **2026-07-26 — Identifying tags are copied, not scrubbed.** `BodySerialNumber`,
   `LensSerialNumber`, `CameraOwnerName` and `Artist` all come across. This app's purpose
   is a frame as close to the original as the format allows; mainstream editors preserve
@@ -555,15 +579,13 @@ Recorded so they are not re-litigated. Date them when they change.
   device". Options not yet weighed — reword our rationale to name what the user will actually
   see, drop the custom dialog and let the system prompt speak for itself, or accept the mismatch.
   Worth deciding deliberately because it is a consent question, not a copy question.
-- **Should the library-injected permissions be stripped?** The merged manifest requests
-  `ACCESS_NETWORK_STATE` (from `media3-common` and `media3-exoplayer`), `WAKE_LOCK` (from
-  `media3-exoplayer`) and `READ_MEDIA_VISUAL_USER_SELECTED`, none of them declared by this
-  project. `INTERNET` is confirmed absent, so the hard constraint holds — but two network/wake
-  permissions on an F-Droid listing sit badly against "No network access" in the non-goals. They
-  can be dropped with `tools:node="remove"`; the risk is that Media3's `NetworkTypeObserver`
-  touches `ConnectivityManager`, which throws `SecurityException` without the permission. Needs
-  a device test before committing, since a crash on a path we never exercise is worse than a
-  permission we never use.
+- **Should `READ_MEDIA_VISUAL_USER_SELECTED` be stripped?** The last of the three
+  library-injected permissions; the other two were settled on 2026-08-08 (see decisions below).
+  Deliberately held back from that change because it is entangled with the consent-dialog
+  question above, not independent of it: that permission is plausibly what puts **"Allow limited
+  access"** in the system prompt, so removing it may change what the user is asked. **Unverified
+  — a hypothesis about platform behavior, not a finding.** Decide it together with the wording
+  question, and test it in a change of its own so the dialog's before/after is attributable.
 - **Does a gallery actually render the byte-copied original as HDR?** Structure is verified —
   gain map at the expected offset, `hdrgm:Version` intact, XMP packet length unchanged — but
   whether Google Photos or a stock gallery *displays* it as HDR is not, and a `screencap` round
