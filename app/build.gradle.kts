@@ -45,6 +45,11 @@ android {
     // Kotlin jvmTarget defaults to compileOptions.targetCompatibility (17) under
     // AGP built-in Kotlin, so no separate kotlin { } block is needed.
     testOptions {
+        // Robolectric reads the app's real manifest and resources. Without this it is
+        // handed neither, and a resource lookup in a test resolves to nothing rather
+        // than failing — which reads as a broken assertion, not a broken setup.
+        unitTests.isIncludeAndroidResources = true
+
         // Run local unit tests on the JUnit 6 (Jupiter) platform. AGP supports
         // this natively for unit tests; no third-party plugin is required.
         unitTests.all {
@@ -79,6 +84,15 @@ dependencies {
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.platform.launcher)
+
+    // Unlike the core- modules, :app's logic is reachable only through a Context, a
+    // ContentResolver and real resources, so its unit tests need an Android runtime.
+    testImplementation(libs.robolectric)
+    // Reused from androidTest rather than added: brings ApplicationProvider and JUnit 4,
+    // which is the dialect Robolectric's runner speaks.
+    testImplementation(libs.androidx.junit)
+    // Runtime only — it discovers and runs the JUnit 4 classes, nothing compiles against it.
+    testRuntimeOnly(libs.junit.vintage.engine)
 
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.junit)

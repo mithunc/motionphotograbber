@@ -568,6 +568,36 @@ Recorded so they are not re-litigated. Date them when they change.
   these, and a frame that silently lost fields the original had would be the surprising
   result. Metadata stripping is a different app.
 
+- **2026-09-05 — Robolectric is added, for `:app` only.** The three `core-` modules take bytes
+  and `File`s and are JVM-testable as they stand; `:app` is the one module whose logic is
+  reachable only through a `Context`, a `ContentResolver` and real resources, and it had **no
+  test source set at all** — so `SourcePhoto`'s failure paths were verifiable only by hand on a
+  device. MIT licensed rather than Apache 2.0 like the rest of the stack: it is
+  `testImplementation` only, never reaches the APK, and so raises no F-Droid question. Recorded
+  rather than glossed because a license should be a decision. Version 4.16.1, confirmed current
+  by lint's own repository check rather than by a release page.
+- **2026-09-05 — `junit-vintage-engine`, not a JUnit downgrade.** Robolectric's runner is JUnit 4
+  and this project is JUnit 6 Jupiter throughout. Vintage runs JUnit 4 classes on the JUnit
+  Platform beside Jupiter, so one `./gradlew test` drives both engines and **not one existing
+  test changed**. Downgrading was the alternative and would have meant rewriting 50 tests across
+  9 classes — including the three `@TestFactory`/`DynamicTest` factories that *are* the mechanism
+  letting the `samples/` tiers skip cleanly on a fresh clone. Vintage is deprecated in JUnit 6
+  but explicitly not slated for removal; it logs an INFO discovery issue per JUnit 4 class.
+- **2026-09-05 — Tests simulate SDK 36 while the project still compiles against 37.** Robolectric
+  4.16.1 ships no android-all runtime for 37. Lowering `compileSdk` to 36 was tried first and
+  **is not available**: `androidx.core:core-ktx` 1.19.0 and `lifecycle-viewmodel-compose` 2.11.0
+  both require compiling against 37 or later, so matching the test runtime would cost an AndroidX
+  downgrade. The gap is declared once in `app/src/test/resources/robolectric.properties` rather
+  than as `@Config(sdk = [36])` per class, so a new test cannot forget it. Deleting that file is
+  the whole change once Robolectric supports 37. **CLAUDE.md's "target the current stable SDK"
+  constraint is untouched** — only the test runtime differs, and only for `:app`.
+- **2026-09-05 — One test exists solely to prove the test setup runs.** `RobolectricSetupTest`
+  reads `R.string.app_name` through a Robolectric `Context`. The failure mode it guards is
+  specific: if vintage is absent or discovers nothing, zero Robolectric tests run and
+  `./gradlew test` still reports success, so the setup would be silently inert and the first
+  symptom would be a bug reaching a device. A green build is not evidence here; the class
+  appearing in the test report is.
+
 ## Open questions to resolve with the human, not by guessing
 
 - Should the saved still land in the same album as the source, or a dedicated folder?

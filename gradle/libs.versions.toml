@@ -11,6 +11,7 @@ exifinterface = "1.4.2"
 junit = "6.1.2"
 junitVersion = "1.1.5"
 espressoCore = "3.5.1"
+robolectric = "4.16.1"
 
 [libraries]
 # Core Android + coroutines
@@ -57,6 +58,26 @@ junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform
 # Instrumented tests (androidTest) still run on the JUnit 4-based AndroidX runner.
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+
+# Robolectric — Android unit tests on the JVM, for :app only. The three core- modules take
+# bytes and Files by design, so they need none of this.
+#
+# MIT licensed rather than Apache 2.0 like everything else here. It is test-only, so it
+# never reaches the APK and raises no F-Droid question — recorded because CLAUDE.md asks
+# for a dependency's license to be a decision rather than an accident.
+#
+# 4.16.1 ships no android-all runtime for SDK 37, so tests simulate 36 while the project
+# still compiles against 37 — set once in app/src/test/resources/robolectric.properties,
+# which explains why lowering compileSdk was not an option.
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+
+# Robolectric's runner is JUnit 4; this project is JUnit 6 Jupiter throughout. Vintage runs
+# JUnit 4 classes on the JUnit Platform alongside Jupiter, so one ./gradlew test drives both
+# engines and no existing test had to change. A downgrade was the alternative and would have
+# meant rewriting 50 tests, including the DynamicTest factories that let the samples/ tiers
+# skip cleanly. Deprecated in JUnit 6 but explicitly not slated for removal.
+# No version.ref: it comes from junit-bom, so it cannot drift from the Jupiter artifacts.
+junit-vintage-engine = { group = "org.junit.vintage", name = "junit-vintage-engine" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
