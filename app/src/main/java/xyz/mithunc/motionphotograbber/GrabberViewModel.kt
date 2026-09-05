@@ -221,26 +221,22 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
         if (state.saving) return
 
         // Location is redacted at read time, so a permission held now only helps via a
-        // re-read. Both branches below exist: asking is not the only way the permission can
-        // become available.
-        if (!current.source.hasLocation) {
-            if (hasLocationPermission()) {
-                // Granted out of band — in system settings, or during an earlier session that
-                // loaded this photo before the grant. Nothing to ask; just re-read and save.
-                viewModelScope.launch {
-                    refreshSourceWithLocation()
-                    performSave(editingSoftware)
-                }
-                return
-            }
-            if (!locationAsked) {
+        // re-read. Which branch that lands in is decided in [nextSaveStep], where it is
+        // testable without a device.
+        val step = nextSaveStep(
+            sourceHasLocation = current.source.hasLocation,
+            permissionHeld = hasLocationPermission(),
+            alreadyAsked = locationAsked,
+        )
+        when (step) {
+            SaveStep.SaveNow -> performSave(editingSoftware)
+            SaveStep.RefreshThenSave -> refreshThenSave(editingSoftware)
+            SaveStep.AskForLocation -> {
                 locationAsked = true
                 pendingSaveEditingSoftware = editingSoftware
                 viewModelScope.launch { _events.send(GrabberEvent.NeedsLocationPermission) }
-                return
             }
         }
-        performSave(editingSoftware)
     }
 
     /**
@@ -252,29 +248,62 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
     fun onLocationPermissionResult(granted: Boolean) {
         val editingSoftware = pendingSaveEditingSoftware ?: return
         pendingSaveEditingSoftware = null
+        if (granted) refreshThenSave(editingSoftware) else performSave(editingSoftware)
+    }
+
+    /**
+     * Re-reads with location and saves, or reports why the re-read could not be done.
+     *
+     * [saving] is set here rather than left to [performSave], because the refresh in between
+     * re-copies the whole file over a `ContentResolver` — long enough for a second tap to
+     * start a second save on top of the first.
+     */
+    private fun refreshThenSave(editingSoftware: String) {
+        (_uiState.value as? UiState.Ready)?.let { _uiState.value = it.copy(saving = true) }
         viewModelScope.launch {
-            if (granted) refreshSourceWithLocation()
+            val failure = refreshSourceWithLocation()
+            if (failure != null) return@launch failSave(failure)
             performSave(editingSoftware)
         }
     }
 
     /**
-     * Re-reads the source now that location is available, and re-parses it.
+     * Re-reads the source now that location is available, and re-parses it. Returns null on
+     * success, or the reason it could not be done.
+     *
+     * **A failure here has to stop the save.** Carrying on would write the *redacted* copy
+     * and report "Saved" — a photo with a zeroed GPS IFD, presented as the thing this app
+     * exists to produce. Nothing downstream can detect the substitution, so this is the last
+     * point at which it can be caught.
      *
      * The ranges will almost certainly be identical — redaction zeroes the GPS IFD in place
      * without changing the file's length — but deriving byte offsets from an assumption about
      * how a privacy filter happens to work is exactly the kind of shortcut that produces a
      * corrupt save, so the parse is redone.
      */
-    private suspend fun refreshSourceWithLocation() {
-        val current = session ?: return
+    private suspend fun refreshSourceWithLocation(): String? {
+        val current = session ?: return "the photo is no longer open"
         val context = getApplication<Application>()
         val refreshed = withContext(Dispatchers.IO) { current.source.refresh(context, withLocation = true) }
-        if (refreshed !is SourcePhoto.Result.Opened) return
-        val parsed = withContext(Dispatchers.IO) { MotionPhotoParser.parse(refreshed.source.file) }
-        if (parsed !is MotionPhoto.Found) return
-        current.source = refreshed.source
-        current.found = parsed
+        val source = when (refreshed) {
+            is SourcePhoto.Result.Opened -> refreshed.source
+            is SourcePhoto.Result.Failed -> return refreshed.reason
+        }
+        val found = when (val parsed = withContext(Dispatchers.IO) { MotionPhotoParser.parse(source.file) }) {
+            is MotionPhoto.Found -> parsed
+            is MotionPhoto.NotMotionPhoto -> return parsed.reason
+            is MotionPhoto.NotSupported -> return parsed.reason
+            is MotionPhoto.Malformed -> return parsed.reason
+        }
+        current.source = source
+        current.found = found
+        return null
+    }
+
+    /** Ends a save that never got as far as writing anything. */
+    private suspend fun failSave(reason: String) {
+        (_uiState.value as? UiState.Ready)?.let { _uiState.value = it.copy(saving = false) }
+        _events.send(GrabberEvent.SaveFinished(SaveResult.Failed(reason)))
     }
 
     private fun performSave(editingSoftware: String) {
