@@ -650,6 +650,18 @@ Recorded so they are not re-litigated. Date them when they change.
   `SourcePhotoTest` pins both, and both were confirmed to fail against the pre-fix code
   rather than merely to pass against the fixed one.
 
+- **2026-09-05 — The 2026-07-26 redaction measurement is confirmed, and a testing trap
+  found alongside it.** Re-measured on a Pixel 11 Pro (Android 17, SDK 37) against a real
+  camera photo (`owner_package_name=com.google.android.GoogleCamera`): read *without*
+  `ACCESS_MEDIA_LOCATION`, the app's cached copy is the same 6,417,645 bytes as the
+  original but a different MD5 — redaction happens, in place, at unchanged length, exactly
+  as recorded. **The trap:** the same test staged with an `adb push`-ed file
+  (`owner_package_name=com.android.shell`) came back *byte-identical to the original with
+  GPS intact*, i.e. not redacted at all. A redaction test built on pushed media therefore
+  passes vacuously, and would have "confirmed" GPS preservation while proving nothing. Use
+  a camera-owned photo. The cause of the difference was not established and is deliberately
+  not guessed at here.
+
 ## Open questions to resolve with the human, not by guessing
 
 - Should the saved still land in the same album as the source, or a dedicated folder?
@@ -689,6 +701,19 @@ Recorded so they are not re-litigated. Date them when they change.
   and our own parser certainly would reject it — but the user-visible consequence is
   unverified. Needs a real file pushed through the path and opened in Google Photos and
   a stock gallery before the rewrite is designed.
+- **Does `MediaStore.setRequireOriginal` work under a share-intent grant at all?**
+  Observed 2026-09-05 on Android 17: with the app holding `ACCESS_MEDIA_LOCATION` and a
+  read grant for `content://media/external/images/media/<id>`, the located re-read of
+  `…/<id>?requireOriginal=1` failed with *"has no access to"*. If that also holds for a
+  grant issued by a real sharing app rather than by `am start --grant-read-uri-permission`,
+  then `refreshSourceWithLocation` can **never** succeed for a shared photo — and since
+  2026-09-05 that is a visible save failure rather than the silent redacted save it used to
+  be. The app declares no `READ_MEDIA_IMAGES`, so a grant is all it ever has. Not settled:
+  the observation comes from a shell-issued grant, which is exactly the kind of staging that
+  produced the false redaction result above. **Needs a genuine share from Google Photos**
+  before any conclusion is drawn, and certainly before any code changes. If it is real, the
+  fix is a design question — request `READ_MEDIA_IMAGES`, fall back to the ungated read, or
+  tell the user the location could not be recovered — not a bug fix.
 - Should the preview path use approximate seeking and the save path exact? Measured drift
   with default `SeekParameters` was 8–36 ms against a 500 ms request — under one frame
   interval on every sample — so the default may already be good enough for saves. Not yet
