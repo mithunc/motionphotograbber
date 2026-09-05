@@ -18,6 +18,7 @@ package xyz.mithunc.motionphotograbber.motionphoto
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -175,6 +176,39 @@ class MotionPhotoParserEdgeCaseTest {
         )
 
         assertInstanceOf(MotionPhoto.Found::class.java, result)
+    }
+
+    @Test
+    fun `a path with no file at it is unreadable`() {
+        // Not "too small to be a JPEG": File.length() answers 0 here, but nothing has been
+        // read, so there is no structure to make a claim about.
+        val result = MotionPhotoParser.parse(File(tempDir, "never-written.jpg"))
+
+        assertInstanceOf(MotionPhoto.Unreadable::class.java, result)
+    }
+
+    @Test
+    fun `a file that cannot be opened is unreadable rather than a throw`() {
+        // The reachable case in the app: a cache copy whose backing storage went away, or
+        // a share grant revoked between the copy and the parse. RandomAccessFile throws
+        // IOException, and GrabberViewModel calls this inside a bare viewModelScope.launch
+        // with no handler, so a throw here is a crash.
+        val file = File(tempDir, "unreadable.jpg")
+        file.writeBytes(SyntheticMotionPhoto.build().bytes)
+        assumeTrue(
+            file.setReadable(false, false) && !file.canRead(),
+            "read permission could not be revoked here — running as root?",
+        )
+
+        try {
+            val result = MotionPhotoParser.parse(file)
+
+            val unreadable = assertInstanceOf(MotionPhoto.Unreadable::class.java, result)
+            assertTrue(unreadable.reason.isNotBlank(), "the reason must say what went wrong")
+        } finally {
+            // Restored so @TempDir cleanup is not left fighting the permissions.
+            file.setReadable(true, false)
+        }
     }
 
     // --- input builders ---

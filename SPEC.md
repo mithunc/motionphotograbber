@@ -629,6 +629,27 @@ Recorded so they are not re-litigated. Date them when they change.
   validated the SOI marker on the way in. A second check there would be redundant, and a
   redundant check reads as a real one.
 
+- **2026-09-05 — `MotionPhoto.Unreadable` is a variant of its own, not a reuse of
+  `Malformed`.** `parse(File)` opens and reads, and both can fail; `Malformed` means
+  "claims to be a motion photo but its structure does not hold together", which is a claim
+  about content that a file that never opened has given no grounds for. The cost was
+  weighed — it changes a public sealed interface in `:core-motionphoto` — and turned out to
+  be one added branch, `GrabberViewModel`'s being the only exhaustive `when` over the type
+  in the repo. `LoadError.Unreadable` already existed to receive it. Note that `parse(File)`
+  now also answers `Unreadable` for a path with **no file at it**, which previously reported
+  "file is too small to be a JPEG": `File.length()` returns 0 for a missing file, so the old
+  answer was a structural claim about bytes nobody had read.
+- **2026-09-05 — `SourcePhoto.copyFrom` catches `IllegalArgumentException` too.** Providers
+  raise it for a Uri they do not recognize, and a Uri arriving on a share intent is
+  untrusted input. Recorded because widening a catch list is the kind of change that can
+  hide a genuine bug in our own Uri handling behind a user-facing "could not read"; the
+  judgment is that an unrecognized Uri is far more likely to come from the sender than from
+  us, and a crash is the worse failure either way. The same commit moved the display-name
+  query and `setRequireOriginal` *inside* the `try` — they ran above it, so a revoked share
+  grant threw `SecurityException` one line above the catch written for that exact scenario.
+  `SourcePhotoTest` pins both, and both were confirmed to fail against the pre-fix code
+  rather than merely to pass against the fixed one.
+
 ## Open questions to resolve with the human, not by guessing
 
 - Should the saved still land in the same album as the source, or a dedicated folder?

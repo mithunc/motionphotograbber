@@ -69,4 +69,14 @@ sealed interface MotionPhoto {
 
     /** Claims to be a motion photo but its structure does not hold together. */
     data class Malformed(val reason: String) : MotionPhoto
+
+    /**
+     * The file could not be read at all, so nothing is known about what is in it.
+     *
+     * Distinct from [Malformed], which is a claim about *structure* and would be a lie
+     * here: a file that never opened has told us nothing to disbelieve. Only
+     * [MotionPhotoParser.parse] over a [java.io.File] can produce this; the `ByteArray`
+     * overload has already done the reading.
+     */
+    data class Unreadable(val reason: String) : MotionPhoto
 }

@@ -140,6 +140,7 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
                 is MotionPhoto.NotMotionPhoto -> return@launch fail(LoadError.NotAMotionPhoto)
                 is MotionPhoto.NotSupported -> return@launch fail(LoadError.UnsupportedFlavor(parsed.flavor))
                 is MotionPhoto.Malformed -> return@launch fail(LoadError.Malformed(parsed.reason))
+                is MotionPhoto.Unreadable -> return@launch fail(LoadError.Unreadable(parsed.reason))
             }
 
             // ExoPlayer wants a Looper thread, so it is built here on the main dispatcher
@@ -294,6 +295,7 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
             is MotionPhoto.NotMotionPhoto -> return parsed.reason
             is MotionPhoto.NotSupported -> return parsed.reason
             is MotionPhoto.Malformed -> return parsed.reason
+            is MotionPhoto.Unreadable -> return parsed.reason
         }
         current.source = source
         current.found = found

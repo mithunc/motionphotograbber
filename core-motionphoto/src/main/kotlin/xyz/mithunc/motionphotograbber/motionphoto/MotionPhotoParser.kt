@@ -16,6 +16,7 @@
 package xyz.mithunc.motionphotograbber.motionphoto
 
 import java.io.File
+import java.io.IOException
 import java.io.RandomAccessFile
 
 /**
@@ -74,16 +75,31 @@ object MotionPhotoParser {
     }
 
     fun parse(file: File): MotionPhoto {
+        // Checked before the size, because File.length() answers 0 for a path that does
+        // not exist — which would otherwise be reported as an empty JPEG, a claim about
+        // structure that nothing has been read to support.
+        if (!file.isFile) {
+            return MotionPhoto.Unreadable("no readable file at ${file.path}")
+        }
         val totalSize = file.length()
         if (totalSize < MIN_JPEG_BYTES) {
             return MotionPhoto.NotMotionPhoto("file is too small to be a JPEG")
         }
-        val result = RandomAccessFile(file, "r").use { source ->
-            val header = ByteArray(minOf(totalSize, MAX_HEADER_BYTES.toLong()).toInt())
-            source.readFully(header)
-            parse(header, totalSize) { offset, count -> source.readAtOrNull(offset, count) }
+        // Opening and reading are both failable on a file that stat'd fine a moment ago:
+        // a revoked grant, a provider that has died, a disk error. Returned rather than
+        // thrown because "could not read this" is an expected outcome here, and the
+        // caller in :app runs this inside a bare viewModelScope.launch.
+        return try {
+            val result = RandomAccessFile(file, "r").use { source ->
+                val header = ByteArray(minOf(totalSize, MAX_HEADER_BYTES.toLong()).toInt())
+                source.readFully(header)
+                parse(header, totalSize) { offset, count -> source.readAtOrNull(offset, count) }
+            }
+            // The Samsung scan reads the whole file, so it is inside the try as well.
+            withSamsungFallback(result) { containsSamsungMarker(file) }
+        } catch (e: IOException) {
+            MotionPhoto.Unreadable(e.message ?: "could not read ${file.name}")
         }
-        return withSamsungFallback(result) { containsSamsungMarker(file) }
     }
 
     fun parse(bytes: ByteArray): MotionPhoto {

@@ -72,12 +72,16 @@ class SourcePhoto private constructor(
          *   permission — so an optimistic true here fails louder than it helps.
          */
         fun copyFrom(context: Context, uri: Uri, withLocation: Boolean): Result {
-            val name = displayNameOf(context, uri) ?: "shared.jpg"
+            // Only the destination is derived before the try, because every catch block
+            // deletes it. Everything that touches the Uri belongs inside: querying it and
+            // opening it fail the same ways, for the same reasons, and a throw from the
+            // query used to escape the catch written for exactly that scenario.
             val dir = File(context.cacheDir, CACHE_SUBDIR).apply { mkdirs() }
             val destination = File(dir, if (withLocation) SLOT_LOCATED else SLOT_REDACTED)
-            val readFrom = if (withLocation) requireOriginal(uri) else uri
 
             return try {
+                val name = displayNameOf(context, uri) ?: "shared.jpg"
+                val readFrom = if (withLocation) requireOriginal(uri) else uri
                 context.contentResolver.openInputStream(readFrom).use { input ->
                     if (input == null) {
                         return Result.Failed("the provider returned no data for this photo")
@@ -95,6 +99,11 @@ class SourcePhoto private constructor(
                 Result.Failed(e.reason())
             } catch (e: UnsupportedOperationException) {
                 // setRequireOriginal raises this when the permission is not actually held.
+                destination.delete()
+                Result.Failed(e.reason())
+            } catch (e: IllegalArgumentException) {
+                // Providers raise this for a Uri they do not recognize, and a Uri arriving
+                // on a share intent is untrusted input like any other.
                 destination.delete()
                 Result.Failed(e.reason())
             }
