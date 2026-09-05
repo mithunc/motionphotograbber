@@ -116,6 +116,12 @@ class SourcePhoto private constructor(
          * different provider, which has no equivalent opt-in — whether the permission alone
          * un-redacts those is unverified, so this deliberately leaves such a Uri untouched
          * rather than transforming it into something the provider will not recognize.
+         *
+         * That guard is load-bearing, not defensive tidiness. Measured 2026-09-05: Google
+         * Photos shares through its *own* provider, never a `content://media` Uri, so this
+         * returns the Uri unchanged and `setRequireOriginal` is never called on the one path
+         * most shares actually take. Rewriting it would break that path. Photos redacts by
+         * the receiving app's permission regardless, so the re-read still recovers GPS.
          */
         private fun requireOriginal(uri: Uri): Uri =
             if (uri.authority == MediaStore.AUTHORITY) MediaStore.setRequireOriginal(uri) else uri

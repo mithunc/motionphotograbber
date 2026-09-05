@@ -662,6 +662,43 @@ Recorded so they are not re-litigated. Date them when they change.
   a camera-owned photo. The cause of the difference was not established and is deliberately
   not guessed at here.
 
+- **2026-09-05 — `setRequireOriginal` is never reached on a real share, and the located
+  re-read works. The open question raised earlier the same day is closed.** Google Photos
+  does not hand out a MediaStore Uri at all; it shares its own provider:
+
+  ```
+  content://com.google.android.apps.photos.contentprovider/-1/1/
+    content%3A%2F%2Fmedia%2Fexternal%2Fimages%2Fmedia%2F<id>/REQUIRE_ORIGINAL/NONE/image%2Fjpeg/<n>
+  ```
+
+  The authority is not `MediaStore.AUTHORITY`, so `SourcePhoto.requireOriginal` returns it
+  untouched and `MediaStore.setRequireOriginal` is never called. **That provider still
+  redacts by the receiving app's permission**, so the app's behavior is unchanged in
+  substance: measured end-to-end on a Pixel 11 Pro, sharing one motion photo from Google
+  Photos, same 6,417,645 bytes throughout —
+
+  | Step | Cache slot | MD5 |
+  | --- | --- | --- |
+  | Shared with the permission revoked | `source.jpg` | `fa13d812…` (redacted) |
+  | Granted out of band, then Save | `source-located.jpg` | `1e66f4c1…` (the original) |
+
+  The saved frame carries GPS, `Make`/`Model`, and the right `DateTimeOriginal`, with the
+  motion-photo declarations stripped. So `refreshSourceWithLocation` **succeeds** on a real
+  share and genuinely recovers the location: the fix does not turn ordinary saves into
+  failures.
+
+  The earlier "has no access to `…?requireOriginal=1`" failure was an artifact of the test
+  rig. `am start --grant-read-uri-permission` grants exactly the bare MediaStore Uri, and
+  `setRequireOriginal` then produces a *different* Uri outside that grant. No real sharer
+  reaches that path. **Second time this session that adb staging manufactured a false
+  result** — the other being unredacted `adb push`-ed media. Treat any conclusion drawn from
+  a shell-issued grant or a pushed file as unproven until a real app has been in the loop.
+
+  A side effect worth keeping: `requireOriginal`'s guard on `uri.authority ==
+  MediaStore.AUTHORITY` is load-bearing, not defensive tidiness. Without it the Photos Uri
+  would be rewritten into something its provider does not recognize, breaking the one path
+  that currently works.
+
 ## Open questions to resolve with the human, not by guessing
 
 - Should the saved still land in the same album as the source, or a dedicated folder?
@@ -701,19 +738,6 @@ Recorded so they are not re-litigated. Date them when they change.
   and our own parser certainly would reject it — but the user-visible consequence is
   unverified. Needs a real file pushed through the path and opened in Google Photos and
   a stock gallery before the rewrite is designed.
-- **Does `MediaStore.setRequireOriginal` work under a share-intent grant at all?**
-  Observed 2026-09-05 on Android 17: with the app holding `ACCESS_MEDIA_LOCATION` and a
-  read grant for `content://media/external/images/media/<id>`, the located re-read of
-  `…/<id>?requireOriginal=1` failed with *"has no access to"*. If that also holds for a
-  grant issued by a real sharing app rather than by `am start --grant-read-uri-permission`,
-  then `refreshSourceWithLocation` can **never** succeed for a shared photo — and since
-  2026-09-05 that is a visible save failure rather than the silent redacted save it used to
-  be. The app declares no `READ_MEDIA_IMAGES`, so a grant is all it ever has. Not settled:
-  the observation comes from a shell-issued grant, which is exactly the kind of staging that
-  produced the false redaction result above. **Needs a genuine share from Google Photos**
-  before any conclusion is drawn, and certainly before any code changes. If it is real, the
-  fix is a design question — request `READ_MEDIA_IMAGES`, fall back to the ungated read, or
-  tell the user the location could not be recovered — not a bug fix.
 - Should the preview path use approximate seeking and the save path exact? Measured drift
   with default `SeekParameters` was 8–36 ms against a 500 ms request — under one frame
   interval on every sample — so the default may already be good enough for saves. Not yet
