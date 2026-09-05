@@ -38,6 +38,12 @@ internal object SyntheticMotionPhoto {
 
     private const val XMP_STANDARD_PREFIX = "http://ns.adobe.com/xap/1.0/\u0000"
 
+    /**
+     * What the XMP-carrying JPEG is padded to when the directory does not call it the
+     * Primary. Comfortably above the ~1.2 KB the packet actually occupies.
+     */
+    private const val XMP_CARRIER_BYTES = 4096
+
     /** A synthetic file plus the byte ranges the parser is expected to derive from it. */
     internal class Built(
         val bytes: ByteArray,
@@ -45,6 +51,12 @@ internal object SyntheticMotionPhoto {
         val gainMapRange: LongRange,
         val videoRange: LongRange,
     )
+
+    /** The three items a Google container motion photo carries. */
+    enum class Part { PRIMARY, GAIN_MAP, VIDEO }
+
+    /** Primary first, video last — the only layout the format permits. */
+    val CONFORMANT_ORDER: List<Part> = listOf(Part.PRIMARY, Part.GAIN_MAP, Part.VIDEO)
 
     /**
      * Items are laid out consecutively from offset 0, and only the gain map and video
@@ -55,7 +67,9 @@ internal object SyntheticMotionPhoto {
     fun build(): Built {
         val video = mp4()
         val gainMap = minimalJpeg()
-        val still = primaryJpeg(gainMapLength = gainMap.size, videoLength = video.size)
+        val still = jpegCarrying(
+            directory(CONFORMANT_ORDER, gainMapLength = gainMap.size, videoLength = video.size)
+        )
 
         val stillEnd = still.size.toLong() - 1
         val gainMapEnd = stillEnd + gainMap.size
@@ -65,6 +79,46 @@ internal object SyntheticMotionPhoto {
             gainMapRange = (stillEnd + 1)..gainMapEnd,
             videoRange = (gainMapEnd + 1)..(gainMapEnd + video.size),
         )
+    }
+
+    /**
+     * A file whose directory lists [order] and whose bytes are laid out to match, so a
+     * non-conformant ordering can be rejected for *being* non-conformant rather than for
+     * the byte mismatch a directory-only reordering would also produce.
+     *
+     * Whatever the directory calls it, physical position 0 always holds a JPEG carrying the
+     * XMP. A file that does not open with an SOI marker is rejected as not-a-JPEG long
+     * before any ordering check, and a fixture that got that wrong would quietly be
+     * asserting the wrong rejection.
+     */
+    fun buildInOrder(order: List<Part>): ByteArray {
+        require(order.size == Part.entries.size && order.toSet() == Part.entries.toSet()) {
+            "every part must appear exactly once, got $order"
+        }
+        require(order.first() != Part.VIDEO) {
+            "an MP4 at offset 0 is not a JPEG, so the parser would never reach the ordering check"
+        }
+
+        val video = mp4()
+        val carrier = order.first()
+        // The XMP declares a length for every item but the Primary, so an item that both
+        // carries the XMP and declares a length would need its own size before the XMP
+        // stating it could be written. Padding the carrier to a fixed width cuts that
+        // circularity; the Primary needs none, its length being implied by subtraction.
+        val gainMapLength =
+            if (carrier == Part.GAIN_MAP) XMP_CARRIER_BYTES else minimalJpeg().size
+        val xmp = directory(order, gainMapLength = gainMapLength, videoLength = video.size)
+
+        return order.map { part ->
+            when (part) {
+                Part.PRIMARY ->
+                    if (carrier == Part.PRIMARY) jpegCarrying(xmp) else minimalJpeg()
+                Part.GAIN_MAP ->
+                    if (carrier == Part.GAIN_MAP) padTo(jpegCarrying(xmp), gainMapLength)
+                    else minimalJpeg()
+                Part.VIDEO -> video
+            }
+        }.reduce(ByteArray::plus)
     }
 
     /**
@@ -78,14 +132,19 @@ internal object SyntheticMotionPhoto {
     fun buildWithDeclaredVideoLength(declaredVideoLength: Int): ByteArray {
         val video = mp4()
         val gainMap = minimalJpeg()
-        val still = primaryJpeg(gainMapLength = gainMap.size, videoLength = declaredVideoLength)
+        val still = jpegCarrying(
+            directory(
+                CONFORMANT_ORDER,
+                gainMapLength = gainMap.size,
+                videoLength = declaredVideoLength,
+            )
+        )
         return still + gainMap + video
     }
 
-    /** SOI, an APP1 segment carrying the container directory, then EOI. */
-    private fun primaryJpeg(gainMapLength: Int, videoLength: Int): ByteArray {
-        val payload = (XMP_STANDARD_PREFIX + xmp(gainMapLength, videoLength))
-            .toByteArray(Charsets.UTF_8)
+    /** SOI, an APP1 segment carrying [xmp], then EOI. */
+    private fun jpegCarrying(xmp: String): ByteArray {
+        val payload = (XMP_STANDARD_PREFIX + xmp).toByteArray(Charsets.UTF_8)
         val segmentLength = payload.size + 2
         require(segmentLength <= 0xFFFF) { "XMP too large for a single APP1 segment" }
 
@@ -99,17 +158,45 @@ internal object SyntheticMotionPhoto {
         return out.toByteArray()
     }
 
+    /**
+     * Zero-pads to exactly [size]. The bytes land after EOI, which is legal filler: an
+     * item is only ever checked for how it *starts*.
+     */
+    private fun padTo(bytes: ByteArray, size: Int): ByteArray {
+        require(bytes.size <= size) {
+            "$XMP_CARRIER_BYTES is too small for a ${bytes.size}-byte XMP carrier"
+        }
+        return bytes + ByteArray(size - bytes.size)
+    }
+
     private fun minimalJpeg(): ByteArray =
         byteArrayOf(0xFF.toByte(), 0xD8.toByte()) +
             ByteArray(64) + // stand-in for image data
             byteArrayOf(0xFF.toByte(), 0xD9.toByte())
 
     /**
-     * The third item deliberately orders its attributes differently from the second.
-     * Real files vary here, and a parser that reads attributes positionally would pass
-     * a uniformly-ordered fixture while failing on a real photo.
+     * The directory, listing [order] as `<rdf:li>` entries in exactly that sequence.
+     *
+     * Attribute order is keyed on the item rather than its position, so it survives a
+     * reordering: the MotionPhoto item deliberately orders its attributes differently from
+     * the GainMap's. Real files vary here, and a parser that read attributes positionally
+     * would pass a uniformly-ordered fixture while failing on a real photo.
      */
-    private fun xmp(gainMapLength: Int, videoLength: Int): String = """
+    private fun directory(order: List<Part>, gainMapLength: Int, videoLength: Int): String {
+        val entries = order.joinToString("\n") { part ->
+            val item = when (part) {
+                Part.PRIMARY ->
+                    """<Container:Item Item:Mime="image/jpeg" Item:Semantic="Primary"/>"""
+                Part.GAIN_MAP ->
+                    """<Container:Item Item:Length="$gainMapLength" Item:Mime="image/jpeg" Item:Semantic="GainMap"/>"""
+                Part.VIDEO ->
+                    """<Container:Item Item:Mime="video/mp4" Item:Semantic="MotionPhoto" Item:Length="$videoLength" Item:Padding="0"/>"""
+            }
+            "             <rdf:li rdf:parseType=\"Resource\">\n" +
+                "              $item\n" +
+                "             </rdf:li>"
+        }
+        return """
         <?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
         <x:xmpmeta xmlns:x="adobe:ns:meta/">
          <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -122,22 +209,15 @@ internal object SyntheticMotionPhoto {
             GCamera:MotionPhotoPresentationTimestampUs="$DEFAULT_FRAME_TIMESTAMP_US">
            <Container:Directory>
             <rdf:Seq>
-             <rdf:li rdf:parseType="Resource">
-              <Container:Item Item:Mime="image/jpeg" Item:Semantic="Primary"/>
-             </rdf:li>
-             <rdf:li rdf:parseType="Resource">
-              <Container:Item Item:Length="$gainMapLength" Item:Mime="image/jpeg" Item:Semantic="GainMap"/>
-             </rdf:li>
-             <rdf:li rdf:parseType="Resource">
-              <Container:Item Item:Mime="video/mp4" Item:Semantic="MotionPhoto" Item:Length="$videoLength" Item:Padding="0"/>
-             </rdf:li>
+$entries
             </rdf:Seq>
            </Container:Directory>
           </rdf:Description>
          </rdf:RDF>
         </x:xmpmeta>
         <?xpacket end="w"?>
-    """.trimIndent()
+        """.trimIndent()
+    }
 
     /** ftyp, moov (carrying an mvhd), and mdat — enough to be a well-formed ISO-BMFF file. */
     private fun mp4(): ByteArray {

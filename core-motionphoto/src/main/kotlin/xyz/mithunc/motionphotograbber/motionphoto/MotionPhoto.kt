@@ -38,6 +38,12 @@ sealed interface MotionPhoto {
      *
      * All ranges are absolute byte offsets into the source file and are inclusive at
      * both ends, so they can be used directly for byte-copying without adjustment.
+     *
+     * **The items are in conformant order:** [stillByteRange] starts at 0 and
+     * [videoByteRange] ends at the last byte of the file, with everything else packed
+     * between them. The format requires it and the parser rejects containers that break
+     * it, so callers may treat the still and its gain map as a contiguous prefix — which
+     * is what makes recovering the original still a plain byte copy.
      */
     data class Found(
         val stillByteRange: LongRange,

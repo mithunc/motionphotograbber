@@ -17,6 +17,7 @@ package xyz.mithunc.motionphotograbber.motionphoto
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -123,6 +124,57 @@ class MotionPhotoParserEdgeCaseTest {
         )
 
         assertInstanceOf(MotionPhoto.Malformed::class.java, result)
+    }
+
+    @Test
+    fun `a container whose Primary is not the first item is malformed`() {
+        // "The directory may contain only one primary image item and it must be the first
+        // item in the directory." MotionPhotoStillWriter recovers the still by copying a
+        // prefix of the file, so a Primary anywhere else would have it publish the wrong
+        // bytes down the one path meant to preserve the original exactly.
+        val result = MotionPhotoParser.parse(
+            SyntheticMotionPhoto.buildInOrder(
+                listOf(
+                    SyntheticMotionPhoto.Part.GAIN_MAP,
+                    SyntheticMotionPhoto.Part.PRIMARY,
+                    SyntheticMotionPhoto.Part.VIDEO,
+                ),
+            ),
+        )
+
+        val malformed = assertInstanceOf(MotionPhoto.Malformed::class.java, result)
+        assertTrue(malformed.reason.contains("Primary"), malformed.reason)
+    }
+
+    @Test
+    fun `a container whose video is not the last item is malformed`() {
+        // "The location of this media item must be at the end of the file. No other bytes
+        // may be placed after this media item's bytes have terminated." Note the bytes here
+        // are internally consistent — every item lands on the data it claims — so only the
+        // ordering check catches this one.
+        val result = MotionPhotoParser.parse(
+            SyntheticMotionPhoto.buildInOrder(
+                listOf(
+                    SyntheticMotionPhoto.Part.PRIMARY,
+                    SyntheticMotionPhoto.Part.VIDEO,
+                    SyntheticMotionPhoto.Part.GAIN_MAP,
+                ),
+            ),
+        )
+
+        val malformed = assertInstanceOf(MotionPhoto.Malformed::class.java, result)
+        assertTrue(malformed.reason.contains("not last"), malformed.reason)
+    }
+
+    @Test
+    fun `the conformant order is accepted`() {
+        // Guards the two checks above against being trivially satisfiable: a fixture path
+        // that rejected everything would pass both of them.
+        val result = MotionPhotoParser.parse(
+            SyntheticMotionPhoto.buildInOrder(SyntheticMotionPhoto.CONFORMANT_ORDER),
+        )
+
+        assertInstanceOf(MotionPhoto.Found::class.java, result)
     }
 
     // --- input builders ---

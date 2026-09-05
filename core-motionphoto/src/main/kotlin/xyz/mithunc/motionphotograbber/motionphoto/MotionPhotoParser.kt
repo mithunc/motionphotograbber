@@ -338,11 +338,41 @@ object MotionPhotoParser {
         }
         val gainMapIndex = items.indexOfFirst { it.semantic == "GainMap" }
 
+        // The two ordering rules the rest of this project builds on. Checked here rather
+        // than assumed, because MotionPhotoStillWriter copies a *prefix* of the file to
+        // recover the still: get the order wrong and it publishes a plausible-looking but
+        // wrong run of bytes down the one path meant to preserve the original exactly.
+        //
+        // Verified 2026-09-05 against
+        // https://developer.android.com/media/platform/motion-photo-format
+        //
+        // "The directory may contain only one primary image item and it must be the first
+        // item in the directory."
+        if (stillIndex != 0) {
+            return MotionPhoto.Malformed("the Primary item is at index $stillIndex, not first")
+        }
+        // "Media items must be located in the container file in the same order as the media
+        // item elements in the directory and must be tightly packed." — with "The location
+        // of this media item [the video] must be at the end of the file. No other bytes may
+        // be placed after this media item's bytes have terminated."
+        //
+        // This subsumes "writers encoding motion photos must place the gainmap item element
+        // before the video item element": items are tightly packed from offset 0, so "the
+        // video is the last item" and "the video ends at EOF" are the same statement, and
+        // every other item necessarily precedes it.
+        if (videoIndex != items.lastIndex) {
+            return MotionPhoto.Malformed(
+                "the MotionPhoto item is at index $videoIndex of ${items.size} items, not last"
+            )
+        }
+
         // Every declared length has to be taken on trust up to this point: the Primary
         // declares none, so it absorbs whatever the others leave over and the arithmetic
         // always balances. A truncated file, or one whose XMP misstates a length, still
         // produces a set of ranges that look entirely reasonable — they just point at
         // the wrong bytes. The only way to catch that is to look.
+        // The Primary needs no check of its own: pinned at index 0 above, its range starts
+        // at 0, which hasJpegStartOfImage already validated on the way in.
         checkItemLandsOnExpectedData(items[videoIndex], ranges[videoIndex], source)
             ?.let { return it }
         if (gainMapIndex >= 0) {

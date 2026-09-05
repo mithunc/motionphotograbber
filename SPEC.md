@@ -93,6 +93,22 @@ sample contradicts should be corrected here rather than worked around in code.
   is needed.
 - Three items, in file order: **Primary** (image/jpeg), **GainMap** (image/jpeg),
   **MotionPhoto** (video/mp4). Items are laid out consecutively from offset 0.
+- **That order is required by the format, not merely observed.** Verified 2026-09-05
+  against <https://developer.android.com/media/platform/motion-photo-format>:
+  - "The directory may contain only one primary image item and it must be the first item
+    in the directory."
+  - "Media items must be located in the container file in the same order as the media item
+    elements in the directory and must be tightly packed."
+  - "writers encoding motion photos must place the gainmap item element before the video
+    item element."
+  - Of the video item: "The location of this media item must be at the end of the file. No
+    other bytes may be placed after this media item's bytes have terminated."
+
+  `MotionPhotoParser` asserts the first and the last of these and returns `Malformed`
+  otherwise; together they imply the other two, because tightly-packed-from-zero makes
+  "the video is the last item" and "the video ends at EOF" the same statement. This is
+  load-bearing rather than decorative: `MotionPhotoStillWriter` recovers the still by
+  copying a **prefix** of the file, which is correct only under exactly this layout.
 - **Primary declares no `Item:Length`.** Compute it as
   `filesize − Σ(other declared lengths)`. A parser that requires the attribute fails on
   every real file.
@@ -597,6 +613,21 @@ Recorded so they are not re-litigated. Date them when they change.
   `./gradlew test` still reports success, so the setup would be silently inert and the first
   symptom would be a bug reaching a device. A green build is not evidence here; the class
   appearing in the test report is.
+
+- **2026-09-05 — The parser asserts the container item order; it does not support other
+  orderings.** This **reverses an earlier in-session decision** to handle arbitrary
+  orderings, including reordering the XMP `<rdf:li>` entries on write. The reversal is the
+  point: the format forbids every layout that support would have handled (see the four
+  quoted sentences under "Container structure"), so the feature had no case to serve, while
+  the code to handle it would have had no way to be exercised or reviewed against a real
+  file. Two checks in `layOutItems` cost nothing and turn `MotionPhotoStillWriter`'s
+  prefix copy from accidentally correct into provably correct. All three `samples/` files
+  still parse as `Found` under the assertions, which is the evidence the spec reading is
+  right; had any reported `Malformed`, the change was to stop rather than loosen the check.
+- **2026-09-05 — The Primary item's bytes get no separate landing check.** With Primary
+  pinned at index 0 its range starts at 0, where `hasJpegStartOfImage` has already
+  validated the SOI marker on the way in. A second check there would be redundant, and a
+  redundant check reads as a real one.
 
 ## Open questions to resolve with the human, not by guessing
 

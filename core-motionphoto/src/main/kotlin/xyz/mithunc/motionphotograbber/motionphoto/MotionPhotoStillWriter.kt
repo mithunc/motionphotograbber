@@ -89,8 +89,10 @@ object MotionPhotoStillWriter {
      *   that exact file.
      */
     fun writeStill(source: File, found: MotionPhoto.Found, destination: File): Result {
-        // Items are laid out consecutively from offset 0 with the video last, so the
-        // still and its gain map are one contiguous run at the front — no stitching.
+        // The still and its gain map are one contiguous run at the front, so the whole
+        // still is a prefix of the file — no stitching. That holds because
+        // MotionPhotoParser.layOutItems rejects any container whose Primary is not first
+        // or whose video is not last, so a Found can only describe that layout.
         val stillEnd = (found.gainMapByteRange ?: found.stillByteRange).last
         val stillLength = stillEnd + 1
 
